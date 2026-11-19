@@ -49,3 +49,6 @@ junit.xml*
 *.zip
 *.provisionprofile
 .swp
+
+# Local test settings from `npm run local`
+.local/

@@ -13,6 +13,7 @@ import { AuthService } from "@/libs/services/auth.service";
 import { BatchRequestBuilder } from "@/libs/services/batch-request-builder";
 import { DefaultDirectoryFactoryService } from "@/libs/services/directory-factory.service";
 import { DefaultEnvironmentService as EnvironmentServiceImplementation } from "@/libs/services/environment/environment.service";
+import { applyServerOverride } from "@/libs/services/environment/server-override";
 import { I18nService } from "@/libs/services/i18n.service";
 import { LowdbStorageService } from "@/libs/services/lowdbStorage.service";
 import { NativeSecureStorageService } from "@/libs/services/nativeSecureStorage.service";
@@ -178,6 +179,7 @@ export class Main {
   private async init() {
     await this.storageService.init();
     await this.stateService.init();
+    await applyServerOverride(this.stateService);
     await this.environmentService.setUrlsFromStorage();
     if (!this.environmentService.isCloud()) {
       trustSystemCaCertificates(this.logService);

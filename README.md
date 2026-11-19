@@ -51,6 +51,17 @@ Environment variables:
 
 Requirements: Node.js (version in `.nvmrc`), npm, and a Rust toolchain for the native keychain module. On Linux also `libsecret-1-dev`, `libdbus-1-dev` and `pkg-config`. On Windows, the Visual C++ build tools.
 
+### Run it locally (one command)
+
+```bash
+npm run local              # installs, builds and starts the desktop app
+npm run local -- --fresh   # same, but starts with empty test settings
+```
+
+This never talks to the Eduneon cloud: the server is pinned to your local Cockpit at `http://localhost:5000` (override with `EDUNEON_DC_SERVER_URL=http://localhost:5001 npm run local`), settings are kept in `./.local/appdata`, and the auto-updater is off.
+
+### Other commands
+
 Desktop app:
 
 ```bash

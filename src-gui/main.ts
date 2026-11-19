@@ -8,6 +8,7 @@ import { AppIdService } from "@/libs/services/appId.service";
 import { AuthService } from "@/libs/services/auth.service";
 import { BatchRequestBuilder } from "@/libs/services/batch-request-builder";
 import { DefaultDirectoryFactoryService } from "@/libs/services/directory-factory.service";
+import { applyServerOverride, SERVER_URL_ENV } from "@/libs/services/environment/server-override";
 import { I18nService } from "@/libs/services/i18n.service";
 import { NativeSecureStorageService } from "@/libs/services/nativeSecureStorage.service";
 import { NodeApiService } from "@/libs/services/nodeApi.service";
@@ -233,6 +234,10 @@ export class Main {
         return;
       }
       await this.stateService.init();
+      const serverOverride = await applyServerOverride(this.stateService);
+      if (serverOverride) {
+        this.logService.info(`Server pinned by ${SERVER_URL_ENV}: ${serverOverride}`);
+      }
 
       await this.windowMain.createWindowWhenReady();
       await this.i18nService.init(app.getLocale());

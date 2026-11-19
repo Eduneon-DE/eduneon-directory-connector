@@ -90,7 +90,14 @@ jobs:
 
       - name: Build and package
         shell: bash
-        run: npm run ${{ matrix.dist }}
+        run: |
+          # A missing secret arrives as an empty string, and electron-builder treats an empty
+          # CSC_LINK as a certificate path ("... not a file"). Drop empty signing variables so
+          # the build falls back to unsigned.
+          for v in CSC_LINK CSC_KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then unset "$v"; fi
+          done
+          npm run ${{ matrix.dist }}
         env:
           # macOS signing: electron-builder signs when CSC_LINK is set, notarize.mjs
           # notarizes when Apple credentials are set. Both are skipped otherwise.
