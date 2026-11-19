@@ -96,9 +96,9 @@ describe("ldapDirectoryService", () => {
       // These users are in the Human Resources ou
       const hrUsers = userFixtures.filter(
         (u) =>
-          u.referenceId === "cn=Roland Dyke,ou=Human Resources,dc=bitwarden,dc=com" ||
-          u.referenceId === "cn=Charin Goulfine,ou=Human Resources,dc=bitwarden,dc=com" ||
-          u.referenceId === "cn=Angelle Guarino,ou=Human Resources,dc=bitwarden,dc=com",
+          u.referenceId === "cn=Roland Dyke,ou=Human Resources,dc=example,dc=com" ||
+          u.referenceId === "cn=Charin Goulfine,ou=Human Resources,dc=example,dc=com" ||
+          u.referenceId === "cn=Angelle Guarino,ou=Human Resources,dc=example,dc=com",
       );
 
       const result = await directoryService.getEntries(true, true);
@@ -115,7 +115,7 @@ describe("ldapDirectoryService", () => {
       );
 
       const roland = userFixtures.find(
-        (u) => u.referenceId === "cn=Roland Dyke,ou=Human Resources,dc=bitwarden,dc=com",
+        (u) => u.referenceId === "cn=Roland Dyke,ou=Human Resources,dc=example,dc=com",
       );
       const result = await directoryService.getEntries(true, true);
       expect(result).toEqual([undefined, [roland]]);
@@ -149,9 +149,7 @@ describe("ldapDirectoryService", () => {
         getSyncConfiguration({ groups: true, groupFilter: "(cn=Red Team)" }),
       );
 
-      const redTeam = groupFixtures.find(
-        (u) => u.referenceId === "cn=Red Team,dc=bitwarden,dc=com",
-      );
+      const redTeam = groupFixtures.find((u) => u.referenceId === "cn=Red Team,dc=example,dc=com");
       const result = await directoryService.getEntries(true, true);
       expect(result).toEqual([[redTeam], undefined]);
     });

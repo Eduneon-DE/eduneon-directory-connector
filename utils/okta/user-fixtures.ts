@@ -8,7 +8,7 @@ const allUsersData: Jsonify<UserEntry>[] = [
   {
     deleted: false,
     disabled: false,
-    email: "btreston@bitwarden.com",
+    email: "btreston@example.com",
     externalId: "00u13jy2et80wo2TC698",
     referenceId: "00u13jy2et80wo2TC698",
   },

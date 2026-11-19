@@ -684,8 +684,8 @@ describe("DefaultStateService", () => {
   describe("Environment URLs", () => {
     const urls: EnvironmentUrls = {
       base: "https://vault.example.com",
-      api: "https://api.example.com",
-      identity: "https://identity.example.com",
+      api: "https://app.eduneon.com/api",
+      identity: "https://app.eduneon.com/identity",
       webVault: "https://vault.example.com",
     };
 
@@ -702,7 +702,7 @@ describe("DefaultStateService", () => {
     it("returns explicit api URL", async () => {
       await stateService.setEnvironmentUrls({ ...urls, base: null });
 
-      expect(await stateService.getApiUrl()).toBe("https://api.example.com");
+      expect(await stateService.getApiUrl()).toBe("https://app.eduneon.com/api");
     });
 
     it("derives API URL from base when api is not set", async () => {
@@ -717,13 +717,13 @@ describe("DefaultStateService", () => {
     });
 
     it("returns default API URL when no URLs are set", async () => {
-      expect(await stateService.getApiUrl()).toBe("https://api.bitwarden.com");
+      expect(await stateService.getApiUrl()).toBe("https://app.eduneon.com/api");
     });
 
     it("returns explicit identity URL", async () => {
       await stateService.setEnvironmentUrls({ ...urls, base: null });
 
-      expect(await stateService.getIdentityUrl()).toBe("https://identity.example.com");
+      expect(await stateService.getIdentityUrl()).toBe("https://app.eduneon.com/identity");
     });
 
     it("derives identity URL from base when identity is not set", async () => {
@@ -738,7 +738,7 @@ describe("DefaultStateService", () => {
     });
 
     it("returns default identity URL when no URLs are set", async () => {
-      expect(await stateService.getIdentityUrl()).toBe("https://identity.bitwarden.com");
+      expect(await stateService.getIdentityUrl()).toBe("https://app.eduneon.com/identity");
     });
 
     it("stores in regular storage, not secure storage", async () => {

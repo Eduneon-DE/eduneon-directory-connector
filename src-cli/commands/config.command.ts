@@ -80,7 +80,7 @@ export class ConfigCommand {
   }
 
   private async setServer(url: string) {
-    url = url === "null" || url === "bitwarden.com" || url === "https://bitwarden.com" ? null : url;
+    url = url === "null" || url === "default" ? null : url;
     const urls = new EnvironmentUrls();
     urls.base = url;
     await this.environmentService.setUrls(urls);

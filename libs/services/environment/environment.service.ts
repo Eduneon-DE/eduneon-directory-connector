@@ -2,6 +2,7 @@ import { Observable, Subject } from "rxjs";
 
 import { EnvironmentService } from "@/libs/abstractions/environment.service";
 import { StateService } from "@/libs/abstractions/state.service";
+import { DEFAULT_API_URL, DEFAULT_IDENTITY_URL, DEFAULT_SERVER_URL } from "@/libs/constants";
 import { EnvironmentUrls } from "@/libs/models/domain/environmentUrls";
 
 export class DefaultEnvironmentService implements EnvironmentService {
@@ -16,8 +17,8 @@ export class DefaultEnvironmentService implements EnvironmentService {
   /**
    * Callers must `await setUrlsFromStorage()` before issuing requests. Loading the URLs cannot
    * happen here: a constructor cannot await, so a fire-and-forget call left the getters
-   * returning the Bitwarden cloud defaults until it settled, which silently sent self-hosted
-   * logins to identity.bitwarden.com.
+   * returning the cloud defaults until it settled, which silently sent logins for a custom
+   * server to the default cloud.
    */
   constructor(private stateService: StateService) {}
 
@@ -26,10 +27,7 @@ export class DefaultEnvironmentService implements EnvironmentService {
   }
 
   isCloud() {
-    return (
-      this.getApiUrl() === "https://api.bitwarden.com" &&
-      this.getIdentityUrl() === "https://identity.bitwarden.com"
-    );
+    return this.getApiUrl() === DEFAULT_API_URL && this.getIdentityUrl() === DEFAULT_IDENTITY_URL;
   }
 
   getWebVaultUrl() {
@@ -40,13 +38,11 @@ export class DefaultEnvironmentService implements EnvironmentService {
     if (this.baseUrl) {
       return this.baseUrl;
     }
-    return "https://vault.bitwarden.com";
+    return DEFAULT_SERVER_URL;
   }
 
   getSendUrl() {
-    return this.getWebVaultUrl() === "https://vault.bitwarden.com"
-      ? "https://send.bitwarden.com/#"
-      : this.getWebVaultUrl() + "/#/send/";
+    return this.getWebVaultUrl() + "/#/send/";
   }
 
   getApiUrl() {
@@ -58,7 +54,7 @@ export class DefaultEnvironmentService implements EnvironmentService {
       return this.baseUrl + "/api";
     }
 
-    return "https://api.bitwarden.com";
+    return DEFAULT_API_URL;
   }
 
   getIdentityUrl() {
@@ -70,7 +66,7 @@ export class DefaultEnvironmentService implements EnvironmentService {
       return this.baseUrl + "/identity";
     }
 
-    return "https://identity.bitwarden.com";
+    return DEFAULT_IDENTITY_URL;
   }
 
   async setUrlsFromStorage(): Promise<void> {

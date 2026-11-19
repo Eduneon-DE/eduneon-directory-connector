@@ -535,7 +535,7 @@ export class LdapDirectoryService implements IDirectoryService {
 
   private checkServerIdentityAltNames(host: string, cert: tls.PeerCertificate) {
     // Fixes the cert representation when subject is empty and altNames are present
-    // Required for node versions < 12.14.1 (which could be used for bwdc cli)
+    // Required for node versions < 12.14.1 (which could be used for the CLI)
     // Adapted from: https://github.com/auth0/ad-ldap-connector/commit/1f4dd2be6ed93dda591dd31ed5483a9b452a8d2a
     // See https://github.com/nodejs/node/issues/11771 for details
     if (cert && cert.subject == null && /(IP|DNS|URL)/.test(cert.subjectaltname)) {

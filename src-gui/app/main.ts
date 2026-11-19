@@ -5,7 +5,7 @@ import { provideRouter, withHashLocation } from "@angular/router";
 
 import { LogLevelType } from "@/libs/enums/logLevelType";
 
-import { BitwardenToastModule } from "@/src-gui/angular/components/toastr.component";
+import { AppToastModule } from "@/src-gui/angular/components/toastr.component";
 import "../scss/styles.scss";
 
 import { routes } from "./app-routing.module";
@@ -22,7 +22,7 @@ bootstrapApplication(AppComponent, {
     provideAnimations(),
     provideRouter(routes, withHashLocation()),
     importProvidersFrom(
-      BitwardenToastModule.forRoot({
+      AppToastModule.forRoot({
         maxOpened: 5,
         autoDismiss: true,
         closeButton: true,

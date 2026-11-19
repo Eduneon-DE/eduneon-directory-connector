@@ -1,5 +1,6 @@
 import { LogService } from "@/libs/abstractions/log.service";
 import { SecureStorageService, StorageService } from "@/libs/abstractions/storage.service";
+import { DEFAULT_API_URL, DEFAULT_IDENTITY_URL } from "@/libs/constants";
 import { DirectoryType } from "@/libs/enums/directoryType";
 import { IConfiguration } from "@/libs/models/IConfiguration";
 import { EnvironmentUrls } from "@/libs/models/domain/environmentUrls";
@@ -488,7 +489,7 @@ export class DefaultStateService implements StateService {
     if (urls?.base) {
       return urls.base + "/api";
     }
-    return "https://api.bitwarden.com";
+    return DEFAULT_API_URL;
   }
 
   async getIdentityUrl(): Promise<string> {
@@ -499,7 +500,7 @@ export class DefaultStateService implements StateService {
     if (urls?.base) {
       return urls.base + "/identity";
     }
-    return "https://identity.bitwarden.com";
+    return DEFAULT_IDENTITY_URL;
   }
 
   // ===================================================================

@@ -72,27 +72,27 @@ import { DefaultNoComponentGlobalConfig, GlobalConfig, Toast, TOAST_CONFIG } fro
   changeDetection: ChangeDetectionStrategy.OnPush,
   standalone: false,
 })
-export class BitwardenToast extends Toast {}
+export class AppToast extends Toast {}
 
-export const BitwardenToastGlobalConfig: GlobalConfig = {
+export const AppToastGlobalConfig: GlobalConfig = {
   ...DefaultNoComponentGlobalConfig,
-  toastComponent: BitwardenToast,
+  toastComponent: AppToast,
 };
 
 @NgModule({
   imports: [CommonModule],
-  declarations: [BitwardenToast],
-  exports: [BitwardenToast],
+  declarations: [AppToast],
+  exports: [AppToast],
 })
-export class BitwardenToastModule {
-  static forRoot(config: Partial<GlobalConfig> = {}): ModuleWithProviders<BitwardenToastModule> {
+export class AppToastModule {
+  static forRoot(config: Partial<GlobalConfig> = {}): ModuleWithProviders<AppToastModule> {
     return {
-      ngModule: BitwardenToastModule,
+      ngModule: AppToastModule,
       providers: [
         {
           provide: TOAST_CONFIG,
           useValue: {
-            default: BitwardenToastGlobalConfig,
+            default: AppToastGlobalConfig,
             config: config,
           },
         },

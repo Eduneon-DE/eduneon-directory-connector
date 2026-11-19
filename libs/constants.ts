@@ -1,5 +1,10 @@
 export const APPLICATION_NAME = "Eduneon Directory Connector";
 
+/** Eduneon cloud used when no custom server URL is configured. */
+export const DEFAULT_SERVER_URL = "https://app.eduneon.com";
+export const DEFAULT_API_URL = DEFAULT_SERVER_URL + "/api";
+export const DEFAULT_IDENTITY_URL = DEFAULT_SERVER_URL + "/identity";
+
 /**
  * Maximum UTF-8 byte length for a secret value stored via Windows Credential Manager.
  *

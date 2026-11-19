@@ -19,9 +19,9 @@ import { OneLoginConfiguration } from "@/libs/models/oneLoginConfiguration";
  *
  * The fix: each configuration carries its own randomly-generated `id`, and secure storage keys
  * are suffixed with that `id`. Distinct configurations (e.g. two AD service accounts, or two
- * Okta orgs pointed at the same Bitwarden organization) each get their own slot in secure
+ * Okta orgs pointed at the same Eduneon organization) each get their own slot in secure
  * storage, so switching `data.json` files also switches which secret is read back. The `id` is
- * intentionally *not* derived from the Bitwarden organization id - customers may legitimately
+ * intentionally *not* derived from the Eduneon organization id - customers may legitimately
  * run multiple directory configurations (different directories/service accounts) against the
  * same organization, and those must not collide either.
  *

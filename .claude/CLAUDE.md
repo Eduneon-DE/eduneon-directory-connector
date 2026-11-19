@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Directory Connector is a TypeScript application that synchronizes users and groups from directory services to Eduneon (fork of Bitwarden Directory Connector). It provides both a desktop GUI (built with Angular and Electron) and a CLI tool (eduneon-dc).
+Directory Connector is a TypeScript application that synchronizes users and groups from directory services to Eduneon. It provides both a desktop GUI (built with Angular and Electron) and a CLI tool (eduneon-dc).
 
 **Supported Directory Services:**
 

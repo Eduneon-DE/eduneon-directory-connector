@@ -5,8 +5,8 @@ import { EnvironmentUrls } from "@/libs/models/domain/environmentUrls";
 
 import { DefaultEnvironmentService } from "./environment.service";
 
-const CLOUD_IDENTITY = "https://identity.bitwarden.com";
-const CLOUD_API = "https://api.bitwarden.com";
+const CLOUD_IDENTITY = "https://app.eduneon.com/identity";
+const CLOUD_API = "https://app.eduneon.com/api";
 const SELF_HOSTED = "https://vault.example.com";
 
 describe("DefaultEnvironmentService", () => {
@@ -55,15 +55,15 @@ describe("DefaultEnvironmentService", () => {
     it("prefers explicit identity and api urls over the base url", async () => {
       stateService.getEnvironmentUrls.mockResolvedValue({
         base: SELF_HOSTED,
-        api: "https://api.example.com",
-        identity: "https://identity.example.com",
+        api: "https://app.eduneon.com/api",
+        identity: "https://app.eduneon.com/identity",
         webVault: null,
       } as EnvironmentUrls);
 
       await sut.setUrlsFromStorage();
 
-      expect(sut.getIdentityUrl()).toBe("https://identity.example.com");
-      expect(sut.getApiUrl()).toBe("https://api.example.com");
+      expect(sut.getIdentityUrl()).toBe("https://app.eduneon.com/identity");
+      expect(sut.getApiUrl()).toBe("https://app.eduneon.com/api");
     });
 
     it("leaves the cloud defaults in place when storage holds no urls", async () => {

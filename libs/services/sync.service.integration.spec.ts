@@ -44,7 +44,7 @@ describe("SyncService", () => {
     messagingService = mock();
     directoryFactory = mock();
 
-    stateService.getApiUrl.mockResolvedValue("https://api.bitwarden.com");
+    stateService.getApiUrl.mockResolvedValue("https://app.eduneon.com/api");
     stateService.getDirectoryType.mockResolvedValue(DirectoryType.Ldap);
     stateService.getOrganizationId.mockResolvedValue("fakeId");
 

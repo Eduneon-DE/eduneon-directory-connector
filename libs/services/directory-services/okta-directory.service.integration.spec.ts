@@ -16,7 +16,7 @@ import { DirectoryType } from "../../enums/directoryType";
 import { OktaDirectoryService } from "./okta-directory.service";
 
 // These tests integrate with a test Okta organization.
-// Credentials are located in the shared Bitwarden collection for Directory Connector testing.
+// Credentials are read from environment variables (see the test setup for the variable names).
 // Place the .env file attachment in the utils folder.
 
 // Load .env variables

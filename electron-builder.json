@@ -4,7 +4,7 @@
   },
   "productName": "Eduneon Directory Connector",
   "appId": "de.eduneon.directory-connector",
-  "copyright": "Copyright © 2026 Eduneon. Based on Bitwarden Directory Connector, © 2015-2026 Bitwarden Inc. GPL-3.0.",
+  "copyright": "Copyright © 2026 Eduneon. Portions © Bitwarden Inc. GPL-3.0.",
   "directories": {
     "buildResources": "resources",
     "output": "dist",

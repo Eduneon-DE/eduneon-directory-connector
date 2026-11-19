@@ -5,7 +5,7 @@ services:
     environment:
       - LDAP_ADMIN_USERNAME=admin
       - LDAP_ADMIN_PASSWORD=admin
-      - LDAP_ROOT=dc=bitwarden,dc=com
+      - LDAP_ROOT=dc=example,dc=com
       - LDAP_ENABLE_TLS=yes
       - LDAP_TLS_CERT_FILE=/certs/openldap.pem
       - LDAP_TLS_KEY_FILE=/certs/openldap-key.pem
@@ -25,9 +25,9 @@ services:
           "-H",
           "ldap://localhost:1389",
           "-b",
-          "dc=bitwarden,dc=com",
+          "dc=example,dc=com",
           "-D",
-          "cn=admin,dc=bitwarden,dc=com",
+          "cn=admin,dc=example,dc=com",
           "-w",
           "admin",
         ]

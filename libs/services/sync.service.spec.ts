@@ -46,7 +46,7 @@ describe("SyncService", () => {
     batchRequestBuilder = mock();
     singleRequestBuilder = mock();
 
-    stateService.getApiUrl.mockResolvedValue("https://api.bitwarden.com");
+    stateService.getApiUrl.mockResolvedValue("https://app.eduneon.com/api");
     stateService.getDirectoryType.mockResolvedValue(DirectoryType.Ldap);
     stateService.getOrganizationId.mockResolvedValue("fakeId");
     const mockDirectoryService = mock<LdapDirectoryService>();
@@ -306,10 +306,10 @@ describe("SyncService", () => {
 
     it("should not throw when an active user and their tombstone share a synthesized email", async () => {
       const activeUser = createUser("nomail@fish.org", {
-        referenceId: "CN=no email,OU=pm19397,DC=bitwarden,DC=support",
+        referenceId: "CN=no email,OU=pm19397,DC=example,DC=support",
       });
       const tombstoneUser = createUser("nomail@fish.org", {
-        referenceId: "CN=no email\\0ADEL:9f41f97b,CN=Deleted Objects,DC=bitwarden,DC=support",
+        referenceId: "CN=no email\\0ADEL:9f41f97b,CN=Deleted Objects,DC=example,DC=support",
         deleted: true,
         disabled: true,
       });
@@ -320,10 +320,10 @@ describe("SyncService", () => {
 
     it("should include the active user and exclude the tombstone when they share a synthesized email", async () => {
       const activeUser = createUser("nomail@fish.org", {
-        referenceId: "CN=no email,OU=pm19397,DC=bitwarden,DC=support",
+        referenceId: "CN=no email,OU=pm19397,DC=example,DC=support",
       });
       const tombstoneUser = createUser("nomail@fish.org", {
-        referenceId: "CN=no email\\0ADEL:9f41f97b,CN=Deleted Objects,DC=bitwarden,DC=support",
+        referenceId: "CN=no email\\0ADEL:9f41f97b,CN=Deleted Objects,DC=example,DC=support",
         deleted: true,
         disabled: true,
       });
@@ -338,10 +338,10 @@ describe("SyncService", () => {
     it("should still throw when two distinct active users share the same email", async () => {
       i18nService.t.mockImplementation((key: string) => key);
       const user1 = createUser("duplicate@fish.org", {
-        referenceId: "CN=user1,OU=pm19397,DC=bitwarden,DC=support",
+        referenceId: "CN=user1,OU=pm19397,DC=example,DC=support",
       });
       const user2 = createUser("duplicate@fish.org", {
-        referenceId: "CN=user2,OU=pm19397,DC=bitwarden,DC=support",
+        referenceId: "CN=user2,OU=pm19397,DC=example,DC=support",
       });
       setupSyncWithUsers([user1, user2]);
 

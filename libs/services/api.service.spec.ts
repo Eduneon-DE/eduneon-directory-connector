@@ -61,7 +61,7 @@ describe("ApiService", () => {
       stateService,
       appIdService,
       jest.fn(),
-      "Bitwarden_DC/test",
+      "Eduneon_DC/test",
     );
   });
 
@@ -69,7 +69,7 @@ describe("ApiService", () => {
    * Regression coverage for PM-43359. ApiService must resolve the server URL from StateService on
    * every request instead of caching it. The main process previously held URLs loaded at startup,
    * so a self-hosted server configured after launch was ignored and org credentials were posted
-   * to the Bitwarden cloud endpoint — surfacing as "400 invalid_client" until the app restarted.
+   * to the default cloud endpoint — surfacing as "400 invalid_client" until the app restarted.
    */
   describe("server url resolution", () => {
     it("uses the api url resolved at the time of each request", async () => {

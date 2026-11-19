@@ -12,7 +12,7 @@ Supported directories:
 
 It comes as a desktop app (Windows, macOS, Linux) and as a command-line tool, `eduneon-dc`, for scheduled syncs on servers.
 
-> **Status:** in development. The rebrand is done; sending data to Eduneon (instead of the upstream Bitwarden API) is the next milestone.
+> **Status:** in development. Sending directory data to Eduneon is the next milestone.
 
 ## Install
 
@@ -73,6 +73,6 @@ node ./build-cli/eduneon-dc.js --help
 
 Set `version` in `package.json`, then push a matching tag (`v2026.11.1`). The [Release workflow](.github/workflows/release.yml) builds every platform and publishes a GitHub release. Code signing turns on when the signing secrets listed in that workflow are configured.
 
-## License and origin
+## License
 
-This project is a fork of [Bitwarden Directory Connector](https://github.com/bitwarden/directory-connector), © Bitwarden Inc., and like the original it is licensed under the [GNU General Public License v3.0](LICENSE.txt). Eduneon is not affiliated with or endorsed by Bitwarden. "Bitwarden" is a trademark of Bitwarden Inc.
+GNU General Public License v3.0, see [LICENSE.txt](LICENSE.txt).

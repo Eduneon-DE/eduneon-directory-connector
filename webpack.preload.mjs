@@ -14,7 +14,7 @@ const common = {
       {
         test: /\.tsx?$/,
         use: { loader: "ts-loader", options: { configFile: "tsconfig.preload.json" } },
-        exclude: /node_modules\/(?!(@bitwarden)\/).*/,
+        exclude: /node_modules/,
       },
     ],
   },
