@@ -1,0 +1,67 @@
+<div class="modal fade">
+  <div class="modal-dialog">
+    <form class="modal-content" (ngSubmit)="submit()">
+      <div class="modal-header">
+        <h3 class="modal-title">{{ "settings" | i18n }}</h3>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <h4>{{ "selfHostedEnvironment" | i18n }}</h4>
+        <p>{{ "selfHostedEnvironmentFooter" | i18n }}</p>
+        <div class="mb-3">
+          <label for="baseUrl" class="form-label">{{ "baseUrl" | i18n }}</label>
+          <input
+            id="baseUrl"
+            type="text"
+            name="BaseUrl"
+            [ngModel]="baseUrl()"
+            (ngModelChange)="baseUrl.set($event)"
+            class="form-control"
+          />
+          <div class="form-text">{{ "ex" | i18n }} https://cockpit.example.com</div>
+        </div>
+        <h4>{{ "customEnvironment" | i18n }}</h4>
+        <p>{{ "customEnvironmentFooter" | i18n }}</p>
+        <div class="mb-3">
+          <label for="webVaultUrl" class="form-label">{{ "webVaultUrl" | i18n }}</label>
+          <input
+            id="webVaultUrl"
+            type="text"
+            name="WebVaultUrl"
+            [ngModel]="webVaultUrl()"
+            (ngModelChange)="webVaultUrl.set($event)"
+            class="form-control"
+          />
+        </div>
+        <div class="mb-3">
+          <label for="apiUrl" class="form-label">{{ "apiUrl" | i18n }}</label>
+          <input
+            id="apiUrl"
+            type="text"
+            name="ApiUrl"
+            [ngModel]="apiUrl()"
+            (ngModelChange)="apiUrl.set($event)"
+            class="form-control"
+          />
+        </div>
+        <div class="mb-3">
+          <label for="identityUrl" class="form-label">{{ "identityUrl" | i18n }}</label>
+          <input
+            id="identityUrl"
+            type="text"
+            name="IdentityUrl"
+            [ngModel]="identityUrl()"
+            (ngModelChange)="identityUrl.set($event)"
+            class="form-control"
+          />
+        </div>
+      </div>
+      <div class="modal-footer justify-content-start">
+        <button type="submit" class="btn btn-primary">
+          <i class="bwi bwi-save bwi-fw"></i>
+          {{ "save" | i18n }}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

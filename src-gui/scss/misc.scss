@@ -1,0 +1,218 @@
+@import "bootstrap/scss/_variables.scss";
+
+body {
+  padding: 0 0 20px 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+// App header, like Cockpit's top bar: brand mark and product name on white.
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: #ffffff;
+  border-bottom: 1px solid $border-color;
+
+  img {
+    height: 22px;
+    width: auto;
+  }
+
+  .app-header-title {
+    font-size: 0.95rem;
+    font-weight: 650;
+    color: $headings-color;
+  }
+
+  .app-header-subtitle {
+    font-weight: 500;
+    color: $text-muted;
+  }
+}
+
+h1 {
+  border-bottom: 1px solid $border-color;
+  padding-bottom: 8px;
+  margin-bottom: 20px;
+
+  small {
+    color: $text-muted;
+    font-size: $h1-font-size * 0.6;
+    font-weight: 500;
+  }
+}
+
+h2,
+h3,
+h4 {
+  font-weight: 600;
+}
+
+// Tabs styled like Cockpit's MUI tabs: no box, blue 2px underline on the active tab.
+.nav-tabs {
+  gap: 4px;
+
+  .nav-link {
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 6px 6px 0 0;
+    font-weight: 600;
+    padding: 8px 14px;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.025);
+      border-bottom-color: transparent;
+    }
+
+    &.active {
+      color: $headings-color;
+      background: transparent;
+      border-bottom-color: $primary-accent;
+    }
+  }
+}
+
+.card {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+
+  .card-header {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: $headings-color;
+    border-bottom-color: $border-color;
+  }
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: #222222;
+  border-color: #222222;
+  box-shadow:
+    0 2px 5px 0 rgba(50, 50, 93, 0.1),
+    0 1px 2px 0 rgba(0, 0, 0, 0.08);
+}
+
+#duo-frame {
+  background: url("../images/loading.svg") 0 0 no-repeat;
+  height: 380px;
+
+  iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+}
+
+app-root > #loading {
+  text-align: center;
+  margin-top: 20px;
+  color: $text-muted;
+}
+
+ul.testing-list {
+  ul {
+    padding-left: 18px;
+  }
+
+  li.deleted {
+    text-decoration: line-through;
+  }
+}
+
+.callout {
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid $border-color;
+  border-left-width: 4px;
+  border-radius: 6px;
+  background-color: #ffffff;
+
+  .callout-heading {
+    margin-top: 0;
+  }
+
+  h3.callout-heading {
+    font-weight: 600;
+  }
+
+  &.callout-primary {
+    border-left-color: $primary;
+
+    .callout-heading {
+      color: $primary;
+    }
+  }
+
+  &.callout-info {
+    border-left-color: $info;
+
+    .callout-heading {
+      color: $info;
+    }
+  }
+
+  &.callout-danger {
+    border-left-color: $danger;
+
+    .callout-heading {
+      color: $danger;
+    }
+  }
+
+  &.callout-success {
+    border-left-color: $success;
+
+    .callout-heading {
+      color: $success;
+    }
+  }
+
+  &.callout-warning {
+    border-left-color: $warning;
+
+    .callout-heading {
+      color: $warning;
+    }
+  }
+
+  ul {
+    padding-left: 40px;
+    margin: 0;
+  }
+}
+
+// Outlined buttons: Cockpit's outlinedPrimary (white, light border, dark grey text).
+.btn[class*="btn-outline-"] {
+  &:not(:hover) {
+    border-color: $border-color;
+    background-color: #ffffff;
+  }
+}
+
+.btn-outline-primary,
+.btn-outline-secondary {
+  color: $body-color;
+  border-color: $border-color;
+  background-color: #ffffff;
+
+  &:hover:not(:disabled),
+  &:active {
+    color: $body-color !important;
+    border-color: #c1c9d2 !important;
+    background-color: #f7fafc !important;
+  }
+
+  &:disabled {
+    color: #a3acb9;
+    opacity: 1;
+  }
+
+  &:focus,
+  &.focus {
+    box-shadow: 0 0 0 $btn-focus-width rgba($primary-accent, 0.2);
+  }
+}

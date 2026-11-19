@@ -1,0 +1,13 @@
+# Build directories
+build
+build-cli
+dist
+
+# External libraries / auto synced locales
+src/locales
+
+# Github Workflows
+.github/workflows
+
+# Native module (auto-generated)
+native

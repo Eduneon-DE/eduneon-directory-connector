@@ -1,0 +1,228 @@
+name: Release
+
+# Builds the desktop app and the CLI for every platform and publishes them as a GitHub
+# release. Push a tag like `v2026.11.1` (matching package.json "version") to release.
+#
+# Signing is optional and switches on when the secrets exist:
+#   macOS:   MAC_CERT_P12_BASE64, MAC_CERT_PASSWORD, APPLE_ID_USERNAME, APPLE_ID_PASSWORD, APPLE_TEAM_ID
+#   Windows: SIGNING_VAULT_URL, SIGNING_ACCESS_TOKEN, SIGNING_CERT_NAME (Azure Key Vault via AzureSignTool)
+# Without them the builds are unsigned: they install, but macOS Gatekeeper and Windows
+# SmartScreen show a warning on first launch.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: 0
+
+jobs:
+  setup:
+    name: Read versions
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      node_version: ${{ steps.v.outputs.node_version }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - id: v
+        run: |
+          VERSION=$(jq -r .version package.json)
+          NODE_NVMRC=$(cat .nvmrc)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "node_version=${NODE_NVMRC/v/}" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version $VERSION"
+            exit 1
+          fi
+
+  gui:
+    name: Desktop app (${{ matrix.name }})
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+            dist: dist:lin
+          - name: windows-x64
+            os: windows-2022
+            dist: dist:win
+          - name: macos-x64
+            os: macos-15-intel
+            dist: dist:mac
+          - name: macos-arm64
+            os: macos-15
+            dist: dist:mac:arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      HAS_WIN_SIGNING: ${{ secrets.SIGNING_VAULT_URL != '' }}
+    steps:
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install libdbus-1-dev libsecret-1-dev pkg-config
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: ${{ needs.setup.outputs.node_version }}
+          platform: ${{ runner.os }}
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - run: npm ci
+
+      - name: Install AzureSignTool
+        if: runner.os == 'Windows' && env.HAS_WIN_SIGNING == 'true'
+        run: dotnet tool install --global AzureSignTool --version 4.0.1
+
+      - name: Build and package
+        shell: bash
+        run: npm run ${{ matrix.dist }}
+        env:
+          # macOS signing: electron-builder signs when CSC_LINK is set, notarize.mjs
+          # notarizes when Apple credentials are set. Both are skipped otherwise.
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MAC_CERT_P12_BASE64 != '' }}
+          APPLE_ID_USERNAME: ${{ secrets.APPLE_ID_USERNAME }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows signing via scripts/sign.mjs
+          ELECTRON_BUILDER_SIGN: ${{ secrets.SIGNING_VAULT_URL != '' && '1' || '0' }}
+          SIGNING_VAULT_URL: ${{ secrets.SIGNING_VAULT_URL }}
+          SIGNING_ACCESS_TOKEN: ${{ secrets.SIGNING_ACCESS_TOKEN }}
+          SIGNING_CERT_NAME: ${{ secrets.SIGNING_CERT_NAME }}
+
+      - name: Keep per-arch macOS update manifest apart
+        if: runner.os == 'macOS'
+        run: mv dist/latest-mac.yml "dist/latest-mac-${{ matrix.name }}.yml"
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: gui-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            dist/*.AppImage
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest*.yml
+
+  cli:
+    name: CLI (${{ matrix.name }})
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+            container: ubuntu:20.04 # older glibc so the binary runs on more distros
+            dist: dist:cli:lin
+          - name: windows
+            os: windows-2022
+            dist: dist:cli:win
+          - name: macos-arm64
+            os: macos-15
+            dist: dist:cli:mac:arm64
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    steps:
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get -y install curl ca-certificates git build-essential \
+            libdbus-1-dev libsecret-1-dev pkg-config libatomic1 unzip zip jq
+          git config --global --add safe.directory '*'
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: ${{ needs.setup.outputs.node_version }}
+          platform: ${{ runner.os }}
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - run: npm ci
+      - run: npm run build:native:release
+      - run: npm run ${{ matrix.dist }}
+
+      - name: Zip and check version
+        shell: bash
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+          EDUNEON_DC_PLAINTEXT_SECRETS: "true"
+        run: |
+          DIR="dist-cli/${{ matrix.name }}"
+          ZIP="eduneon-dc-${{ matrix.name }}-$VERSION.zip"
+          BIN="$DIR/eduneon-dc"
+          [ "${{ runner.os }}" = "Windows" ] && BIN="$BIN.exe"
+          GOT=$("$BIN" -v)
+          if [ "$GOT" != "$VERSION" ]; then echo "::error::version $GOT != $VERSION"; exit 1; fi
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "dist-cli/$ZIP" "./$DIR/*"
+          else
+            (cd "$DIR" && zip -r "../$ZIP" .)
+          fi
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: cli-${{ matrix.name }}
+          path: dist-cli/eduneon-dc-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: [setup, gui, cli]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Merge macOS update manifests
+        # electron-updater reads one latest-mac.yml listing both architectures.
+        run: |
+          cd out
+          {
+            head -n 2 latest-mac-macos-x64.yml           # version + "files:"
+            sed -n '/^files:/,/^path:/{/^files:/d;/^path:/d;p}' latest-mac-macos-x64.yml
+            sed -n '/^files:/,/^path:/{/^files:/d;/^path:/d;p}' latest-mac-macos-arm64.yml
+            sed -n '/^path:/,$p' latest-mac-macos-x64.yml
+          } > latest-mac.yml
+          rm latest-mac-macos-*.yml
+          cat latest-mac.yml
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" out/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Eduneon Directory Connector $TAG" \
+            --generate-notes

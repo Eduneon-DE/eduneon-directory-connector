@@ -1,0 +1,20 @@
+import { execSync } from "child_process";
+
+export default async function (configuration) {
+  if (parseInt(process.env.ELECTRON_BUILDER_SIGN) === 1 && configuration.path.slice(-4) == ".exe") {
+    console.log(`[*] Signing file: ${configuration.path}`);
+    execSync(
+      `azuresigntool sign ` +
+        `-kvu ${process.env.SIGNING_VAULT_URL} ` +
+        `-kva ${process.env.SIGNING_ACCESS_TOKEN} ` +
+        `-kvc ${process.env.SIGNING_CERT_NAME} ` +
+        `-fd ${configuration.hash} ` +
+        `-du ${configuration.site} ` +
+        `-tr http://timestamp.digicert.com ` +
+        `"${configuration.path}"`,
+      {
+        stdio: "inherit",
+      },
+    );
+  }
+}

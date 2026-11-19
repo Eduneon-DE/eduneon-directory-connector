@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "newProjectRoot": "apps",
+  "cli": {
+    "analytics": false
+  },
+  "projects": {
+    "app": {
+      "projectType": "application",
+      "schematics": {
+        "@schematics/angular:application": {
+          "strict": true
+        }
+      },
+      "root": ".",
+      "sourceRoot": "src-gui",
+      "prefix": "app",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "outputPath": {
+              "base": "dist"
+            },
+            "index": "src-gui/index.html",
+            "tsConfig": "tsconfig.json",
+            "assets": [
+              { "glob": "**/*", "input": "src-gui/images", "output": "images" },
+              { "glob": "**/*", "input": "src-gui/locales", "output": "locales" }
+            ],
+            "styles": ["src-gui/scss/styles.scss"],
+            "scripts": [],
+            "browser": "src-gui/app/main.ts"
+          }
+        }
+      }
+    }
+  }
+}

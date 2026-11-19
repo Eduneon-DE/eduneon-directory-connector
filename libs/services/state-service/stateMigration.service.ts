@@ -1,0 +1,583 @@
+import { LogService } from "@/libs/abstractions/log.service";
+import { SecureStorageService, StorageService } from "@/libs/abstractions/storage.service";
+import { APPLICATION_NAME } from "@/libs/constants";
+import { HtmlStorageLocation } from "@/libs/enums/htmlStorageLocation";
+import { StateVersion } from "@/libs/enums/stateVersion";
+import { StorageOptions } from "@/libs/models/domain/storageOptions";
+import {
+  SecureStorageKey,
+  SecureStorageKeys,
+  StorageKey,
+  StorageKeys,
+} from "@/libs/models/state.model";
+
+import { passwords } from "dc-native";
+
+// The original implementation of migrate() overrode the jslib implementation and never actually went up
+// to v4. Therefore, the minimum supported version that is out in the wild should be 3 and we need
+// to support migrating from v3 directly to v5.
+const MinSupportedStateVersion = StateVersion.Three;
+
+const SECURE_STORAGE_SERVICE_NAME = APPLICATION_NAME;
+
+export class StateMigrationService {
+  constructor(
+    protected storageService: StorageService,
+    protected secureStorageService: SecureStorageService,
+    protected logService: LogService,
+    protected useSecureStorageForSecrets = true,
+  ) {}
+
+  async needsMigration(): Promise<boolean> {
+    const currentStateVersion = await this.getCurrentStateVersion();
+    return currentStateVersion == null || currentStateVersion < StateVersion.Latest;
+  }
+
+  /**
+   * Ensure stateVersion is persisted in storage. On a fresh install needsMigration() returns
+   * false (no data to migrate) so migrate() is never called, leaving stateVersion absent from
+   * data.json. Calling this after the migration check guarantees the key is always written.
+   */
+  async stampVersion(): Promise<void> {
+    const stored = await this.get<StateVersion>(StorageKeys.stateVersion);
+    if (stored == null) {
+      await this.set(StorageKeys.stateVersion, StateVersion.Latest);
+    }
+  }
+
+  async migrate(): Promise<void> {
+    let currentStateVersion = await this.getCurrentStateVersion();
+
+    if (currentStateVersion < MinSupportedStateVersion) {
+      throw new Error(
+        `Your Directory Connector data is too old to migrate (state version ${currentStateVersion}). ` +
+          `Please download a fresh copy of Directory Connector and reconfigure it.`,
+      );
+    }
+
+    while (currentStateVersion < StateVersion.Latest) {
+      switch (currentStateVersion) {
+        case StateVersion.Three:
+        case StateVersion.Four:
+          await this.migrateStateFrom3To5();
+          break;
+        case StateVersion.Five:
+          await this.migrateStateFrom5To6();
+          break;
+        case StateVersion.Six:
+          await this.migrateStateFrom6To7();
+          break;
+        case StateVersion.Seven:
+          await this.migrateStateFrom7To8();
+          break;
+        case StateVersion.Eight:
+          await this.migrateStateFrom8To9();
+          break;
+        case StateVersion.Nine:
+          await this.migrateStateFrom9To10();
+          break;
+      }
+      currentStateVersion += 1;
+    }
+  }
+
+  /**
+   * Migrate from State v3 (Account-based hierarchy) to v5 (flat key-value structure)
+   *
+   * This is a clean break from the Account-based structure. Data is extracted from
+   * the account and saved into flat keys for simpler access.
+   */
+  protected async migrateStateFrom3To5(useSecureStorageForSecrets = true): Promise<void> {
+    const currentStateVersion = await this.getCurrentStateVersion();
+
+    if (currentStateVersion == StateVersion.Five) {
+      return;
+    }
+
+    const clientId = await this.storageService.get<string>("activeUserId");
+    const account = await this.get<any>(clientId);
+
+    if (!account) {
+      // No account data found, just update version
+      await this.set(StorageKeys.stateVersion, StateVersion.Five);
+      return;
+    }
+
+    // Migrate directory configurations to flat structure.
+    // Secrets within these configs are migrated separately below via secure storage key migration.
+    if (account.directoryConfigurations) {
+      if (account.directoryConfigurations.ldap) {
+        await this.set(StorageKeys.directoryLdap, { ...account.directoryConfigurations.ldap });
+      }
+      if (account.directoryConfigurations.gsuite) {
+        await this.set(StorageKeys.directoryGsuite, { ...account.directoryConfigurations.gsuite });
+      }
+      if (account.directoryConfigurations.entra) {
+        await this.set(StorageKeys.directoryEntra, { ...account.directoryConfigurations.entra });
+      } else if (account.directoryConfigurations.azure) {
+        // Backwards compatibility: migrate azure to entra
+        await this.set(StorageKeys.directoryEntra, { ...account.directoryConfigurations.azure });
+      }
+      if (account.directoryConfigurations.okta) {
+        await this.set(StorageKeys.directoryOkta, { ...account.directoryConfigurations.okta });
+      }
+      if (account.directoryConfigurations.oneLogin) {
+        await this.set(StorageKeys.directoryOnelogin, {
+          ...account.directoryConfigurations.oneLogin,
+        });
+      }
+    }
+
+    // Migrate directory settings to flat structure
+    if (account.directorySettings) {
+      if (account.directorySettings.organizationId) {
+        await this.set(StorageKeys.organizationId, account.directorySettings.organizationId);
+      }
+      if (account.directorySettings.directoryType != null) {
+        await this.set(StorageKeys.directoryType, account.directorySettings.directoryType);
+      }
+      if (account.directorySettings.sync) {
+        await this.set(StorageKeys.sync, account.directorySettings.sync);
+      }
+      if (account.directorySettings.lastUserSync) {
+        await this.set(StorageKeys.lastUserSync, account.directorySettings.lastUserSync);
+      }
+      if (account.directorySettings.lastGroupSync) {
+        await this.set(StorageKeys.lastGroupSync, account.directorySettings.lastGroupSync);
+      }
+      if (account.directorySettings.lastSyncHash) {
+        await this.set(StorageKeys.lastSyncHash, account.directorySettings.lastSyncHash);
+      }
+      if (account.directorySettings.userDelta) {
+        await this.set(StorageKeys.userDelta, account.directorySettings.userDelta);
+      }
+      if (account.directorySettings.groupDelta) {
+        await this.set(StorageKeys.groupDelta, account.directorySettings.groupDelta);
+      }
+      if (account.directorySettings.syncingDir != null) {
+        await this.set(StorageKeys.syncingDir, account.directorySettings.syncingDir);
+      }
+    }
+
+    // Migrate secrets from {userId}_* to their new flat keys.
+    // The old key names are the legacy values used before this migration.
+    // Old keys are intentionally kept — they will be removed in a future migration.
+    // Note: keytar encoding conversion to the versioned V1 format is handled separately in migrateStateFrom5To6.
+    if (useSecureStorageForSecrets) {
+      const oldSecretKeys = [
+        { old: `${clientId}_ldapPassword`, new: SecureStorageKeys.ldap },
+        { old: `${clientId}_gsuitePrivateKey`, new: SecureStorageKeys.gsuite },
+        { old: `${clientId}_azureKey`, new: SecureStorageKeys.azure },
+        // _entraIdKey is the canonical old key; _entraKey was used by the runtime state service
+        // prior to the v4→v5 migration. Only one should be present, but prefer _entraIdKey.
+        {
+          old: (await this.hasSecurely(`${clientId}_entraIdKey`))
+            ? `${clientId}_entraIdKey`
+            : `${clientId}_entraKey`,
+          new: SecureStorageKeys.entra,
+        },
+        { old: `${clientId}_oktaToken`, new: SecureStorageKeys.okta },
+        { old: `${clientId}_oneLoginClientSecret`, new: SecureStorageKeys.oneLogin },
+        { old: `${clientId}_accessToken`, new: SecureStorageKeys.accessToken },
+        { old: `${clientId}_refreshToken`, new: SecureStorageKeys.refreshToken },
+        { old: `${clientId}_twoFactorToken`, new: SecureStorageKeys.twoFactorToken },
+      ];
+
+      for (const { old: oldKey, new: newKey } of oldSecretKeys) {
+        if (await this.hasSecurely(oldKey)) {
+          const value = await this.getSecurely(oldKey);
+          if (value) {
+            await this.secureStorageService.save(newKey, value);
+          }
+        }
+      }
+
+      // Migrate apiKeyClientId and apiKeyClientSecret from account object to secure storage
+      if (account.profile?.apiKeyClientId) {
+        await this.secureStorageService.save(
+          SecureStorageKeys.apiKeyClientId,
+          account.profile.apiKeyClientId,
+        );
+      }
+      if (account.keys?.apiKeyClientSecret) {
+        await this.secureStorageService.save(
+          SecureStorageKeys.apiKeyClientSecret,
+          account.keys.apiKeyClientSecret,
+        );
+      }
+      if (account.tokens) {
+        await this.secureStorageService.save(
+          SecureStorageKeys.accessToken,
+          account.tokens.accessToken,
+        );
+      }
+    }
+
+    // Migrate window/tray settings from globals object
+    const globals = await this.getGlobals();
+    if (globals) {
+      if (globals.window) {
+        await this.set(StorageKeys.window, globals.window);
+      }
+      if (globals.enableAlwaysOnTop != null) {
+        await this.set(StorageKeys.enableAlwaysOnTop, globals.enableAlwaysOnTop);
+      }
+      if (globals.enableTray != null) {
+        await this.set(StorageKeys.enableTray, globals.enableTray);
+      }
+      if (globals.enableMinimizeToTray != null) {
+        await this.set(StorageKeys.enableMinimizeToTray, globals.enableMinimizeToTray);
+      }
+      if (globals.enableCloseToTray != null) {
+        await this.set(StorageKeys.enableCloseToTray, globals.enableCloseToTray);
+      }
+      if (globals.alwaysShowDock != null) {
+        await this.set(StorageKeys.alwaysShowDock, globals.alwaysShowDock);
+      }
+      if (globals.environmentUrls != null) {
+        await this.set(StorageKeys.environmentUrls, globals.environmentUrls);
+      }
+    }
+
+    // Set final state version using the new flat key
+    await this.set(StorageKeys.stateVersion, StateVersion.Five);
+  }
+
+  /**
+   * Migrate from State v5 to v6 — convert any Windows Credential Manager entries that were
+   * written by keytar (UTF-8 via CredWriteA) to the UTF-16 format used by desktop_core
+   * (CredWriteW). This is a no-op on macOS and Linux; migrateKeytarPassword returns
+   * `{ migrated: false }` immediately on those platforms.
+   *
+   * Keys migrated:
+   *   • All current flat SecureStorageKeys (secret_*, accessToken, etc.)
+   *   • Non-sensitive sync metadata keys (StorageKeys.userDelta/groupDelta/lastUserSync/lastGroupSync)
+   *     which were previously written to keytar but are now stored in regular storage
+   */
+  protected async migrateStateFrom5To6(): Promise<void> {
+    // All keys that may have been written by keytar in previous versions and need re-encoding
+    // from UTF-8 (CredWriteA) to UTF-16 (CredWriteW) for desktop_core compatibility.
+    const credentialKeys: string[] = [
+      SecureStorageKeys.ldap,
+      SecureStorageKeys.gsuite,
+      SecureStorageKeys.azure,
+      SecureStorageKeys.entra,
+      SecureStorageKeys.okta,
+      SecureStorageKeys.oneLogin,
+      SecureStorageKeys.accessToken,
+      SecureStorageKeys.refreshToken,
+      SecureStorageKeys.apiKeyClientId,
+      SecureStorageKeys.apiKeyClientSecret,
+      SecureStorageKeys.twoFactorToken,
+    ];
+
+    const results = await Promise.all(
+      credentialKeys.map((key) =>
+        passwords.migrateKeytarPassword(SECURE_STORAGE_SERVICE_NAME, key),
+      ),
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].error) {
+        this.logService.error(
+          `StateMigrationService (v5 to v6): failed to re-encode credential "${credentialKeys[i]}": ${results[i].error}`,
+        );
+      }
+    }
+
+    await this.set(StorageKeys.stateVersion, StateVersion.Six);
+  }
+
+  /**
+   * Migrate from State v6 to v7: catch-up migration for Windows machines where the 3→5
+   * migration failed to copy directory secrets from {userId}_* to flat keys due to the
+   * CredWriteA/CredReadW encoding mismatch. Auth tokens are intentionally excluded: an absent
+   * flat token key means the user is logged out (either by clearAuthTokens() or because the
+   * prior migration already forced re-auth), and restoring a stale token would bypass the login
+   * screen.
+   */
+  protected async migrateStateFrom6To7(): Promise<void> {
+    if (!this.useSecureStorageForSecrets || process.platform !== "win32") {
+      await this.set(StorageKeys.stateVersion, StateVersion.Seven);
+      return;
+    }
+
+    const clientId = await this.storageService.get<string>("activeUserId");
+
+    if (clientId) {
+      const oldSecretKeys = [
+        { old: `${clientId}_ldapPassword`, new: SecureStorageKeys.ldap },
+        { old: `${clientId}_gsuitePrivateKey`, new: SecureStorageKeys.gsuite },
+        { old: `${clientId}_azureKey`, new: SecureStorageKeys.azure },
+        { old: `${clientId}_entraIdKey`, new: SecureStorageKeys.entra },
+        { old: `${clientId}_entraKey`, new: SecureStorageKeys.entra },
+        { old: `${clientId}_oktaToken`, new: SecureStorageKeys.okta },
+        { old: `${clientId}_oneLoginClientSecret`, new: SecureStorageKeys.oneLogin },
+      ];
+
+      const written = new Set<string>();
+      for (const { old: oldKey, new: newKey } of oldSecretKeys) {
+        if (written.has(newKey)) {
+          continue;
+        }
+
+        const alreadyExists = await this.hasSecurely(newKey);
+        if (alreadyExists) {
+          written.add(newKey);
+          continue;
+        }
+
+        let raw: string | null;
+        try {
+          raw = await passwords.readKeytarPassword(SECURE_STORAGE_SERVICE_NAME, oldKey);
+        } catch (e) {
+          this.logService.error(
+            `StateMigrationService (v6 to v7): failed to read legacy credential "${oldKey}": ${e}`,
+          );
+          continue;
+        }
+
+        if (raw != null) {
+          // raw is the keytar blob verbatim (JSON.stringify'd by the old KeytarSecureStorageService).
+          // Parse it once so secureStorageService.save doesn't double-encode it.
+          let value: unknown;
+          try {
+            value = JSON.parse(raw);
+          } catch {
+            // raw is not valid JSON. The old storage layer stored it as a plain string rather
+            // than a JSON-encoded value, so use it as is.
+            value = raw;
+          }
+          try {
+            await this.secureStorageService.save(newKey, value);
+            written.add(newKey);
+          } catch (e) {
+            // On Windows a Google Workspace private key is too large to save as UTF-16. Continue
+            // so the state version still advances and migrateStateFrom9To10 can recover it.
+            this.logService.error(
+              `StateMigrationService (v6 to v7): failed to migrate legacy credential "${oldKey}": ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          }
+        }
+      }
+    }
+
+    await this.set(StorageKeys.stateVersion, StateVersion.Seven);
+  }
+
+  /**
+   * Migrate from State v7 to v8 — preserve invitation behavior for existing installs.
+   *
+   * inviteUsersAfterProvisioning defaults to false for new installs, but installs that
+   * predate the setting always sent invitations after provisioning. If a sync configuration
+   * already exists and does not define the flag, backfill it to true so upgrading users keep
+   * their prior behavior. An explicit value (true or false) is left untouched, and configs
+   * that are absent entirely are not created. Fresh installs never reach this migration —
+   * their state version starts at Latest — so they retain the false default.
+   */
+  protected async migrateStateFrom7To8(): Promise<void> {
+    const sync = await this.get<{ inviteUsersAfterProvisioning?: boolean }>(StorageKeys.sync);
+    if (sync != null && sync.inviteUsersAfterProvisioning === undefined) {
+      sync.inviteUsersAfterProvisioning = true;
+      await this.set(StorageKeys.sync, sync);
+    }
+
+    await this.set(StorageKeys.stateVersion, StateVersion.Eight);
+  }
+
+  /**
+   * Migrate from State v8 to v9 — re-home macOS keychain items to the main process.
+   *
+   * Items created while secure storage ran in the renderer carry an ACL that trusts only that
+   * binary, so main can read them but not modify or delete them (errSecInvalidOwnerEdit).
+   * Reading each value and writing it back recreates the item under main, which then owns it.
+   *
+   * Auth tokens only. Directory secrets are keyed by a configuration id held in data.json, so
+   * they cannot be found when it is absent, and they already recover on their own: saving a
+   * configuration writes the secret afresh under whichever key that save resolves to.
+   */
+  protected async migrateStateFrom8To9(): Promise<void> {
+    if (!this.useSecureStorageForSecrets || process.platform !== "darwin") {
+      await this.set(StorageKeys.stateVersion, StateVersion.Nine);
+      return;
+    }
+
+    const keys: string[] = [
+      SecureStorageKeys.accessToken,
+      SecureStorageKeys.refreshToken,
+      SecureStorageKeys.apiKeyClientId,
+      SecureStorageKeys.apiKeyClientSecret,
+      SecureStorageKeys.twoFactorToken,
+    ];
+
+    for (const key of keys) {
+      try {
+        const value = await this.secureStorageService.get<unknown>(key);
+        if (value == null) {
+          continue;
+        }
+
+        // Skipped unless it reads back, so a value that cannot be read is never deleted.
+        // Logged before the remove so an interrupted migration is diagnosable from the log.
+        this.logService.info(`StateMigrationService: re-homing secure storage key "${key}"`);
+        await this.secureStorageService.remove(key);
+        await this.secureStorageService.save(key, value);
+      } catch (e) {
+        this.logService.error(
+          `StateMigrationService (v8 to v9): failed to re-home secure storage key "${key}": ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+
+    await this.set(StorageKeys.stateVersion, StateVersion.Nine);
+  }
+
+  /**
+   * Migrate from State v9 to v10 (Windows only): copy the Google Workspace private key from its
+   * keytar-era key to SecureStorageKeys.gsuite.
+   *
+   * Earlier migrations (3→5, 5→6, 6→7) wrote it as UTF-16 through desktop_core, which is too
+   * large for Credential Manager, so it never reached the new key. Secrets are now written as
+   * UTF-8, so the key fits. Customers who downgraded to a
+   * keytar version to keep using Google Workspace have also kept saving it under the old key.
+   *
+   * On this build, 6→7 now writes the key as UTF-8 and succeeds, so for installs upgrading from
+   * ≤v6 this step is a no-op. It remains the only recovery path for installs an earlier release
+   * already stamped at v7–v9, where 6→7 ran under the old UTF-16 write and left the key missing.
+   *
+   * Skipped if the current gsuite secret already reads back, so a key saved by this version is
+   * never replaced by the older keytar value. This also makes the step idempotent: re-running it
+   * after a successful migration — or after 6→7 already recovered the key — is a no-op.
+   */
+  protected async migrateStateFrom9To10(): Promise<void> {
+    if (!this.useSecureStorageForSecrets || process.platform !== "win32") {
+      await this.set(StorageKeys.stateVersion, StateVersion.Ten);
+      return;
+    }
+
+    const clientId = await this.storageService.get<string>("activeUserId");
+
+    if (clientId && !(await this.hasGsuiteSecret())) {
+      const oldKey = `${clientId}_gsuitePrivateKey`;
+      try {
+        const raw = await passwords.readKeytarPassword(SECURE_STORAGE_SERVICE_NAME, oldKey);
+        if (raw != null) {
+          // raw is the keytar blob verbatim (JSON.stringify'd by the old KeytarSecureStorageService).
+          // Parse it once so save doesn't double-encode it.
+          let value: unknown;
+          try {
+            value = JSON.parse(raw);
+          } catch {
+            value = raw;
+          }
+          await this.secureStorageService.save(SecureStorageKeys.gsuite, value);
+        }
+      } catch (e) {
+        this.logService.error(
+          `StateMigrationService (v9 to v10): failed to migrate legacy credential "${oldKey}": ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+
+    await this.set(StorageKeys.stateVersion, StateVersion.Ten);
+  }
+
+  /**
+   * Whether DefaultStateService would find a Google Workspace private key: under the active
+   * configuration's scoped key, or else the legacy unscoped key. A key that cannot be read
+   * counts as absent.
+   */
+  private async hasGsuiteSecret(): Promise<boolean> {
+    const config = await this.get<{ id?: string }>(StorageKeys.directoryGsuite);
+    const keys = [
+      ...(config?.id != null ? [`${SecureStorageKeys.gsuite}:${config.id}`] : []),
+      SecureStorageKeys.gsuite,
+    ] as SecureStorageKey[];
+
+    for (const key of keys) {
+      try {
+        if ((await this.secureStorageService.get(key)) != null) {
+          return true;
+        }
+      } catch {
+        // Unreadable, so not a key the user can use.
+      }
+    }
+    return false;
+  }
+
+  protected get options(): StorageOptions {
+    return { htmlStorageLocation: HtmlStorageLocation.Local };
+  }
+
+  protected get<T>(key: StorageKey | SecureStorageKey): Promise<T> {
+    return this.storageService.get<T>(key, this.options);
+  }
+
+  protected set(key: StorageKey | SecureStorageKey, value: any): Promise<any> {
+    if (value == null) {
+      return this.storageService.remove(key, this.options);
+    }
+    return this.storageService.save(key, value, this.options);
+  }
+
+  protected async getGlobals(): Promise<any> {
+    return await this.get<any>("global");
+  }
+
+  /**
+   * Like secureStorageService.has(), but a decode failure (an undecodable legacy blob) counts as
+   * absent instead of throwing.
+   */
+  private async hasSecurely(key: string): Promise<boolean> {
+    try {
+      return await this.secureStorageService.has(key);
+    } catch (e) {
+      this.logService.error(
+        `StateMigrationService: could not read a legacy credential: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Like secureStorageService.get(), but a decode failure (an undecodable legacy blob) counts as
+   * absent instead of throwing.
+   */
+  private async getSecurely(key: string): Promise<unknown> {
+    try {
+      return await this.secureStorageService.get(key);
+    } catch (e) {
+      this.logService.error(
+        `StateMigrationService: could not read a legacy credential: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  protected async getCurrentStateVersion(): Promise<StateVersion> {
+    // Try new flat structure first
+    const flatVersion = await this.get<StateVersion>(StorageKeys.stateVersion);
+    if (flatVersion != null) {
+      return flatVersion;
+    }
+
+    // Fall back to old globals structure
+    const globals = await this.getGlobals();
+    if (globals == null) {
+      // No data at all — fresh install, no migration needed
+      return StateVersion.Latest;
+    }
+    return globals?.stateVersion ?? StateVersion.Latest;
+  }
+}

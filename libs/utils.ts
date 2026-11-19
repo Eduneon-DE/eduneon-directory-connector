@@ -1,0 +1,115 @@
+import { I18nService } from "@/libs/abstractions/i18n.service";
+import { MAX_WINDOWS_CREDENTIAL_SECRET_BYTES } from "@/libs/constants";
+import { Entry } from "@/libs/models/entry";
+import { GroupEntry } from "@/libs/models/groupEntry";
+import { LdapConfiguration } from "@/libs/models/ldapConfiguration";
+import { SimResult } from "@/libs/models/simResult";
+import { SyncConfiguration } from "@/libs/models/syncConfiguration";
+import { UserEntry } from "@/libs/models/userEntry";
+import { SyncService } from "@/libs/services/sync.service";
+
+export class ConnectorUtils {
+  static async simulate(
+    syncService: SyncService,
+    i18nService: I18nService,
+    sinceLast: boolean,
+  ): Promise<SimResult> {
+    try {
+      const [groups, users] = await syncService.sync(!sinceLast, true);
+      return this.buildSimResult(groups ?? [], users ?? [], i18nService);
+    } catch (e) {
+      throw e || new Error(i18nService.t("syncError"));
+    }
+  }
+
+  static buildSimResult(
+    groups: GroupEntry[],
+    users: UserEntry[],
+    i18nService: I18nService,
+  ): SimResult {
+    const simResult = new SimResult();
+    simResult.groups = groups;
+    simResult.users = users;
+
+    const userMap = new Map<string, UserEntry>();
+    this.sortEntries(simResult.users, i18nService);
+    for (const u of simResult.users) {
+      userMap.set(u.externalId, u);
+      if (u.deleted) {
+        simResult.deletedUsers.push(u);
+      } else if (u.disabled) {
+        simResult.disabledUsers.push(u);
+      } else {
+        simResult.enabledUsers.push(u);
+      }
+    }
+
+    this.sortEntries(simResult.groups, i18nService);
+    for (const g of simResult.groups) {
+      if (g.userMemberExternalIds == null) {
+        continue;
+      }
+
+      g.users = [];
+      for (const uid of g.userMemberExternalIds) {
+        if (userMap.has(uid)) {
+          g.users.push(userMap.get(uid));
+        } else {
+          const placeholder = new UserEntry();
+          placeholder.email = uid;
+          g.users.push(placeholder);
+        }
+      }
+
+      this.sortEntries(g.users, i18nService);
+    }
+
+    return simResult;
+  }
+
+  static adjustConfigForSave(ldap: LdapConfiguration, sync: SyncConfiguration) {
+    if (ldap.ad) {
+      sync.creationDateAttribute = "whenCreated";
+      sync.revisionDateAttribute = "whenChanged";
+      sync.emailPrefixAttribute = "sAMAccountName";
+      sync.memberAttribute = "member";
+      sync.userObjectClass = "person";
+      sync.groupObjectClass = "group";
+      sync.userEmailAttribute = "mail";
+      sync.groupNameAttribute = "name";
+
+      if (sync.groupPath == null) {
+        sync.groupPath = "CN=Users";
+      }
+      if (sync.userPath == null) {
+        sync.userPath = "CN=Users";
+      }
+    }
+
+    if (sync.interval != null) {
+      if (sync.interval <= 0) {
+        sync.interval = null;
+      } else if (sync.interval < 5) {
+        sync.interval = 5;
+      }
+    }
+  }
+
+  static exceedsWindowsCredentialByteLimit(value: string): boolean {
+    if (!value) {
+      return false;
+    }
+    // NativeSecureStorageService.save stores JSON.stringify(value); measure the stored payload.
+    return (
+      new TextEncoder().encode(JSON.stringify(value)).length > MAX_WINDOWS_CREDENTIAL_SECRET_BYTES
+    );
+  }
+
+  private static sortEntries(arr: Entry[], i18nService: I18nService) {
+    arr.sort((a, b) => {
+      return i18nService.collator
+        ? i18nService.collator.compare(a.displayName, b.displayName)
+        : a.displayName.localeCompare(b.displayName);
+    });
+  }
+}

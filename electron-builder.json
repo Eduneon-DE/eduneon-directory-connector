@@ -1,0 +1,78 @@
+{
+  "extraMetadata": {
+    "name": "eduneon-directory-connector"
+  },
+  "productName": "Eduneon Directory Connector",
+  "appId": "de.eduneon.directory-connector",
+  "copyright": "Copyright © 2026 Eduneon. Portions © Bitwarden Inc. GPL-3.0.",
+  "directories": {
+    "buildResources": "resources",
+    "output": "dist",
+    "app": "build"
+  },
+  "afterSign": "scripts/notarize.mjs",
+  "asarUnpack": ["node_modules/dc-native/**"],
+  "mac": {
+    "artifactName": "Eduneon-Directory-Connector-${version}-${arch}.${ext}",
+    "category": "public.app-category.productivity",
+    "gatekeeperAssess": false,
+    "hardenedRuntime": true,
+    "entitlements": "resources/entitlements.mac.plist",
+    "entitlementsInherit": "resources/entitlements.mac.plist",
+    "target": ["dmg", "zip"]
+  },
+  "win": {
+    "target": ["portable", "nsis"],
+    "signtoolOptions": {
+      "sign": "scripts/sign.mjs"
+    }
+  },
+  "linux": {
+    "category": "Utility",
+    "synopsis": "Sync users and groups from your directory to Eduneon.",
+    "target": ["AppImage"]
+  },
+  "dmg": {
+    "artifactName": "Eduneon-Directory-Connector-${version}-${arch}.${ext}",
+    "icon": "dmg.icns",
+    "contents": [
+      {
+        "x": 150,
+        "y": 185,
+        "type": "file"
+      },
+      {
+        "x": 390,
+        "y": 180,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ],
+    "window": {
+      "width": 540,
+      "height": 380
+    }
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": true,
+    "allowToChangeInstallationDirectory": true,
+    "artifactName": "Eduneon-Directory-Connector-Setup-${version}.${ext}",
+    "uninstallDisplayName": "${productName}",
+    "deleteAppDataOnUninstall": true
+  },
+  "portable": {
+    "artifactName": "Eduneon-Directory-Connector-Portable-${version}.${ext}"
+  },
+  "appImage": {
+    "artifactName": "Eduneon-Directory-Connector-${version}-${arch}.${ext}"
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "Eduneon-DE",
+      "repo": "eduneon-directory-connector",
+      "releaseType": "release"
+    }
+  ]
+}

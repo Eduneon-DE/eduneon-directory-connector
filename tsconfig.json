@@ -1,0 +1,31 @@
+{
+  "angularCompilerOptions": {
+    "strictTemplates": true,
+    "preserveWhitespaces": true
+  },
+  "compilerOptions": {
+    "pretty": true,
+    "moduleResolution": "bundler",
+    "noImplicitAny": true,
+    "target": "ES2022",
+    "module": "ES2022",
+    "lib": ["es5", "es6", "es7", "dom"],
+    "types": ["node", "jest"],
+    "sourceMap": true,
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "declaration": false,
+    "outDir": "dist",
+    "baseUrl": ".",
+    "resolveJsonModule": true,
+    "paths": {
+      "@/*": ["./*"],
+      "@/src-gui/*": ["./src-gui/*"],
+      "@/src-cli/*": ["./src-cli/*"],
+      "@/libs/*": ["./libs/*"]
+    },
+    "useDefineForClassFields": false
+  },
+  "include": ["src-gui", "src-cli", "libs"]
+}

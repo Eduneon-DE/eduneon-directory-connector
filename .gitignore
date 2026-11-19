@@ -1,0 +1,51 @@
+# General
+.DS_Store
+Thumbs.db
+
+# Environment variables used for tests
+.env
+
+# Toolchain
+.eslintcache
+
+# IDEs and editors
+.idea/
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/*
+
+# Node
+node_modules
+npm-debug.log
+
+# Build directories
+dist
+build
+build-cli
+.angular/cache
+
+# Rust build artifacts
+native/target
+native/*.node
+
+# Testing
+coverage*
+junit.xml*
+
+# Misc
+*.crx
+*.pem
+*.zip
+*.provisionprofile
+.swp

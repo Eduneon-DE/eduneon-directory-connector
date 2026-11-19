@@ -1,0 +1,1360 @@
+import { LogService } from "@/libs/abstractions/log.service";
+import { DirectoryType } from "@/libs/enums/directoryType";
+import { StateVersion } from "@/libs/enums/stateVersion";
+import { SecureStorageKeys, StorageKeys } from "@/libs/models/state.model";
+
+import { StateMigrationService } from "./stateMigration.service";
+
+jest.mock("dc-native", () => ({
+  passwords: {
+    migrateKeytarPassword: jest.fn().mockResolvedValue({ migrated: false }),
+    readKeytarPassword: jest.fn().mockResolvedValue(null),
+  },
+}));
+
+import { FakeStorageService } from "@/utils/fakeStorageService";
+
+function makeLogService(): LogService {
+  return {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warning: jest.fn(),
+    error: jest.fn(),
+    write: jest.fn(),
+    time: jest.fn(),
+    timeEnd: jest.fn(),
+  } as unknown as LogService;
+}
+
+function makeService(
+  storage: FakeStorageService,
+  secureStorage: FakeStorageService,
+  useSecureStorageForSecrets = true,
+  logService = makeLogService(),
+): StateMigrationService {
+  return new StateMigrationService(storage, secureStorage, logService, useSecureStorageForSecrets);
+}
+
+describe("StateMigrationService", () => {
+  let storage: FakeStorageService;
+  let secureStorage: FakeStorageService;
+  let svc: StateMigrationService;
+  let logService: LogService;
+
+  beforeEach(() => {
+    storage = new FakeStorageService();
+    secureStorage = new FakeStorageService();
+    logService = makeLogService();
+    svc = makeService(storage, secureStorage, true, logService);
+  });
+
+  describe("needsMigration()", () => {
+    it("returns false when stateVersion key is absent and no global key (fresh install)", async () => {
+      // No keys set at all — treat as fresh install, no migration needed
+      expect(await svc.needsMigration()).toBe(false);
+    });
+
+    it("returns true when stateVersion is StateVersion.Four", async () => {
+      storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+
+      expect(await svc.needsMigration()).toBe(true);
+    });
+
+    it("returns true when stateVersion is StateVersion.Seven (below Latest)", async () => {
+      storage.store.set(StorageKeys.stateVersion, StateVersion.Seven);
+
+      expect(await svc.needsMigration()).toBe(true);
+    });
+
+    it("returns false when stateVersion is StateVersion.Ten (Latest)", async () => {
+      storage.store.set(StorageKeys.stateVersion, StateVersion.Ten);
+
+      expect(await svc.needsMigration()).toBe(false);
+    });
+
+    it("falls back to globals.stateVersion when flat stateVersion key is absent", async () => {
+      storage.store.set("global", { stateVersion: StateVersion.Four });
+
+      expect(await svc.needsMigration()).toBe(true);
+    });
+
+    it("returns false when globals.stateVersion is StateVersion.Ten (Latest)", async () => {
+      storage.store.set("global", { stateVersion: StateVersion.Ten });
+
+      expect(await svc.needsMigration()).toBe(false);
+    });
+
+    it("returns false when globals exists but has no stateVersion (treated as fresh install)", async () => {
+      storage.store.set("global", { window: { width: 1024 } });
+
+      expect(await svc.needsMigration()).toBe(false);
+    });
+  });
+
+  describe("migrate()", () => {
+    it("throws when stateVersion is below StateVersion.Three (MinSupportedStateVersion)", async () => {
+      storage.store.set(StorageKeys.stateVersion, StateVersion.Two);
+
+      await expect(svc.migrate()).rejects.toThrow(
+        "Your Directory Connector data is too old to migrate",
+      );
+    });
+
+    it("runs all migrations when stateVersion is StateVersion.Four", async () => {
+      storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+
+      await svc.migrate();
+
+      expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+    });
+
+    it("runs remaining migrations when stateVersion is StateVersion.Five", async () => {
+      storage.store.set(StorageKeys.stateVersion, StateVersion.Five);
+
+      await svc.migrate();
+
+      expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+    });
+
+    it("runs migrateStateFrom6To7 when stateVersion is StateVersion.Six", async () => {
+      storage.store.set(StorageKeys.stateVersion, StateVersion.Six);
+
+      await svc.migrate();
+
+      expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+    });
+
+    it("does nothing (no extra writes) when stateVersion is already StateVersion.Ten", async () => {
+      storage.store.set(StorageKeys.stateVersion, StateVersion.Ten);
+      const storeSnapshot = new Map(storage.store);
+
+      await svc.migrate();
+
+      expect(storage.store).toEqual(storeSnapshot);
+    });
+  });
+
+  describe("migrateStateFrom4To5()", () => {
+    describe("no account (null activeUserId)", () => {
+      it("writes only stateVersion = Ten, no other keys", async () => {
+        // Seed stateVersion = Four, but no activeUserId and no account data
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+        // Only stateVersion written — nothing else
+        expect(storage.store.size).toBe(1);
+        expect(secureStorage.store.size).toBe(0);
+      });
+    });
+
+    describe("full account (happy path)", () => {
+      const userId = "user-abc-123";
+
+      beforeEach(() => {
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: { apiKeyClientId: "organization.client-id" },
+          keys: { apiKeyClientSecret: "client-secret" },
+          directoryConfigurations: {
+            ldap: { hostname: "ldap.example.com", port: 389 },
+            gsuite: { domain: "example.com", clientEmail: "sa@example.com" },
+            entra: { tenant: "entra-tenant", applicationId: "entra-app-id" },
+            okta: { orgUrl: "https://example.okta.com" },
+            oneLogin: { region: "us", clientId: "ol-client-id" },
+          },
+          directorySettings: {
+            organizationId: "org-123",
+            directoryType: DirectoryType.Ldap,
+            sync: { users: true, groups: true },
+            lastUserSync: "2024-01-01T00:00:00.000Z",
+            lastGroupSync: "2024-06-15T12:00:00.000Z",
+            lastSyncHash: "hash-abc",
+            userDelta: "user-delta-token",
+            groupDelta: "group-delta-token",
+            syncingDir: false,
+          },
+        });
+        storage.store.set("global", {
+          window: { width: 1024, height: 768 },
+          enableAlwaysOnTop: false,
+          enableTray: true,
+          enableMinimizeToTray: true,
+          enableCloseToTray: false,
+          alwaysShowDock: true,
+          environmentUrls: { base: "https://vault.example.com" },
+        });
+
+        // Legacy v4 key names (before this migration)
+        secureStorage.store.set(`${userId}_ldapPassword`, "ldap-pass");
+        secureStorage.store.set(`${userId}_gsuitePrivateKey`, "gsuite-key");
+        secureStorage.store.set(`${userId}_entraIdKey`, "entra-key");
+        secureStorage.store.set(`${userId}_azureKey`, "azure-key");
+        secureStorage.store.set(`${userId}_oktaToken`, "okta-token");
+        secureStorage.store.set(`${userId}_oneLoginClientSecret`, "onelogin-secret");
+        secureStorage.store.set(`${userId}_accessToken`, "access-tok");
+        secureStorage.store.set(`${userId}_refreshToken`, "refresh-tok");
+        secureStorage.store.set(`${userId}_twoFactorToken`, "2fa-tok");
+      });
+
+      it("migrates directory configurations to flat storage keys", async () => {
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.directoryLdap)).toMatchObject({
+          hostname: "ldap.example.com",
+          port: 389,
+        });
+        expect(storage.store.get(StorageKeys.directoryGsuite)).toMatchObject({
+          domain: "example.com",
+        });
+        expect(storage.store.get(StorageKeys.directoryEntra)).toMatchObject({
+          tenant: "entra-tenant",
+          applicationId: "entra-app-id",
+        });
+        expect(storage.store.get(StorageKeys.directoryOkta)).toMatchObject({
+          orgUrl: "https://example.okta.com",
+        });
+        expect(storage.store.get(StorageKeys.directoryOnelogin)).toMatchObject({
+          region: "us",
+          clientId: "ol-client-id",
+        });
+      });
+
+      it("migrates directory settings to flat storage keys", async () => {
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.organizationId)).toBe("org-123");
+        expect(storage.store.get(StorageKeys.directoryType)).toBe(DirectoryType.Ldap);
+        expect(storage.store.get(StorageKeys.sync)).toEqual({
+          users: true,
+          groups: true,
+          inviteUsersAfterProvisioning: true,
+        });
+        expect(storage.store.get(StorageKeys.syncingDir)).toBe(false);
+      });
+
+      it("migrates sync metadata to regular storage", async () => {
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.lastUserSync)).toBe("2024-01-01T00:00:00.000Z");
+        expect(storage.store.get(StorageKeys.lastGroupSync)).toBe("2024-06-15T12:00:00.000Z");
+        expect(storage.store.get(StorageKeys.lastSyncHash)).toBe("hash-abc");
+        expect(storage.store.get(StorageKeys.userDelta)).toBe("user-delta-token");
+        expect(storage.store.get(StorageKeys.groupDelta)).toBe("group-delta-token");
+      });
+
+      it("migrates window/tray settings from globals to flat keys", async () => {
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.window)).toEqual({ width: 1024, height: 768 });
+        expect(storage.store.get(StorageKeys.enableAlwaysOnTop)).toBe(false);
+        expect(storage.store.get(StorageKeys.enableTray)).toBe(true);
+        expect(storage.store.get(StorageKeys.enableMinimizeToTray)).toBe(true);
+        expect(storage.store.get(StorageKeys.enableCloseToTray)).toBe(false);
+        expect(storage.store.get(StorageKeys.alwaysShowDock)).toBe(true);
+      });
+
+      it("migrates environment URLs from account settings", async () => {
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.environmentUrls)).toEqual({
+          base: "https://vault.example.com",
+        });
+      });
+
+      it("migrates old {userId}_* secure storage keys to flat keys", async () => {
+        await svc.migrate();
+
+        // New flat keys present
+        expect(secureStorage.store.get(SecureStorageKeys.ldap)).toBe("ldap-pass");
+        expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe("gsuite-key");
+        expect(secureStorage.store.get(SecureStorageKeys.entra)).toBe("entra-key");
+        expect(secureStorage.store.get(SecureStorageKeys.azure)).toBe("azure-key");
+        expect(secureStorage.store.get(SecureStorageKeys.okta)).toBe("okta-token");
+        expect(secureStorage.store.get(SecureStorageKeys.oneLogin)).toBe("onelogin-secret");
+        expect(secureStorage.store.get(SecureStorageKeys.accessToken)).toBe("access-tok");
+        expect(secureStorage.store.get(SecureStorageKeys.refreshToken)).toBe("refresh-tok");
+        expect(secureStorage.store.get(SecureStorageKeys.twoFactorToken)).toBe("2fa-tok");
+
+        // Old prefixed keys intentionally kept — will be removed in a future migration
+        expect(secureStorage.store.has(`${userId}_ldapPassword`)).toBe(true);
+        expect(secureStorage.store.has(`${userId}_accessToken`)).toBe(true);
+      });
+
+      it("migrates apiKeyClientId and apiKeyClientSecret from account to secure storage", async () => {
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.apiKeyClientId)).toBe(
+          "organization.client-id",
+        );
+        expect(secureStorage.store.get(SecureStorageKeys.apiKeyClientSecret)).toBe("client-secret");
+      });
+
+      it("sets stateVersion to StateVersion.Ten after all migrations", async () => {
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+    });
+
+    describe("GSuite privateKey in prefixed secure storage", () => {
+      it("migrates privateKey from prefixed secure storage key to flat key", async () => {
+        const userId = "user-gsuite-key";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            gsuite: {
+              domain: "example.com",
+              clientEmail: "sa@example.com",
+            },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+        secureStorage.store.set(
+          `${userId}_gsuitePrivateKey`,
+          "-----BEGIN RSA PRIVATE KEY-----\nMIIEo...",
+        );
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe(
+          "-----BEGIN RSA PRIVATE KEY-----\nMIIEo...",
+        );
+        const gsuiteConfig = storage.store.get(StorageKeys.directoryGsuite) as any;
+        expect(gsuiteConfig.domain).toBe("example.com");
+      });
+    });
+
+    describe("Entra key in prefixed secure storage", () => {
+      it("migrates key from prefixed secure storage key (_entraIdKey) to flat key", async () => {
+        const userId = "user-entra-key";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            entra: { tenant: "my-tenant", applicationId: "app-id" },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+        secureStorage.store.set(`${userId}_entraIdKey`, "entra-secret-key");
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.entra)).toBe("entra-secret-key");
+        const entraConfig = storage.store.get(StorageKeys.directoryEntra) as any;
+        expect(entraConfig.tenant).toBe("my-tenant");
+      });
+
+      it("migrates key from azure fallback prefixed secure storage key to flat key", async () => {
+        const userId = "user-azure-key";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            azure: { tenant: "azure-tenant", applicationId: "azure-app" },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+        secureStorage.store.set(`${userId}_azureKey`, "azure-secret-key");
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.azure)).toBe("azure-secret-key");
+        const entraConfig = storage.store.get(StorageKeys.directoryEntra) as any;
+        expect(entraConfig.tenant).toBe("azure-tenant");
+      });
+    });
+
+    describe("Okta token in prefixed secure storage", () => {
+      it("migrates token from prefixed secure storage key to flat key", async () => {
+        const userId = "user-okta-token";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            okta: { orgUrl: "https://example.okta.com" },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+        secureStorage.store.set(`${userId}_oktaToken`, "okta-api-token");
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.okta)).toBe("okta-api-token");
+        const oktaConfig = storage.store.get(StorageKeys.directoryOkta) as any;
+        expect(oktaConfig.orgUrl).toBe("https://example.okta.com");
+      });
+    });
+
+    describe("OneLogin clientSecret in prefixed secure storage", () => {
+      it("migrates clientSecret from prefixed secure storage key to flat key", async () => {
+        const userId = "user-onelogin-secret";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            oneLogin: { clientId: "ol-client-id", region: "us" },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+        secureStorage.store.set(`${userId}_oneLoginClientSecret`, "ol-client-secret");
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.oneLogin)).toBe("ol-client-secret");
+        const oneLoginConfig = storage.store.get(StorageKeys.directoryOnelogin) as any;
+        expect(oneLoginConfig.clientId).toBe("ol-client-id");
+      });
+    });
+
+    describe("LDAP password in prefixed secure storage", () => {
+      it("migrates password from prefixed secure storage key to flat key", async () => {
+        const userId = "user-ldap-pass";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            ldap: { hostname: "ldap.example.com", port: 389 },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+        secureStorage.store.set(`${userId}_ldapPassword`, "super-secret");
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.ldap)).toBe("super-secret");
+        const ldapConfig = storage.store.get(StorageKeys.directoryLdap) as any;
+        expect(ldapConfig.hostname).toBe("ldap.example.com");
+      });
+
+      it("does not overwrite an existing secure storage LDAP secret with StoredSecurely placeholder", async () => {
+        const userId = "user-ldap-placeholder";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            ldap: { hostname: "ldap.example.com", password: "[STORED SECURELY]" },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+        secureStorage.store.set(`${userId}_ldapPassword`, "real-secret");
+
+        await svc.migrate();
+
+        // The prefixed key migration should have moved the real secret
+        expect(secureStorage.store.get(SecureStorageKeys.ldap)).toBe("real-secret");
+      });
+    });
+
+    describe("legacy keytar blob that cannot be decoded (Windows odd-length/invalid UTF-16)", () => {
+      it("does not throw, skips the unreadable key, and still migrates the others when has() rejects", async () => {
+        const userId = "user-undecodable-blob";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            ldap: { hostname: "ldap.example.com" },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+        secureStorage.store.set(`${userId}_gsuitePrivateKey`, "undecodable-blob");
+        secureStorage.store.set(`${userId}_ldapPassword`, "ldap-pass");
+        jest.spyOn(secureStorage, "has").mockImplementation(async (key) => {
+          if (key === `${userId}_gsuitePrivateKey`) {
+            throw new Error("Credential blob is not valid UTF-16.");
+          }
+          return secureStorage.store.has(key);
+        });
+
+        await expect(svc.migrate()).resolves.not.toThrow();
+
+        expect(secureStorage.store.has(SecureStorageKeys.gsuite)).toBe(false);
+        expect(secureStorage.store.get(SecureStorageKeys.ldap)).toBe("ldap-pass");
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("does not throw and skips the key when get() rejects after has() succeeds", async () => {
+        const userId = "user-undecodable-get";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, { profile: {}, keys: {} });
+        secureStorage.store.set(`${userId}_azureKey`, "undecodable-blob");
+        jest.spyOn(secureStorage, "get").mockImplementation(async (key) => {
+          if (key === `${userId}_azureKey`) {
+            throw new Error("Credential blob is not valid UTF-16.");
+          }
+          return secureStorage.store.get(key);
+        });
+
+        await expect(svc.migrate()).resolves.not.toThrow();
+
+        expect(secureStorage.store.has(SecureStorageKeys.azure)).toBe(false);
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("falls back to _entraKey when has(_entraIdKey) rejects", async () => {
+        const userId = "user-entra-has-rejects";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, { profile: {}, keys: {} });
+        secureStorage.store.set(`${userId}_entraKey`, "entra-fallback-value");
+        jest.spyOn(secureStorage, "has").mockImplementation(async (key) => {
+          if (key === `${userId}_entraIdKey`) {
+            throw new Error("Credential blob is not valid UTF-16.");
+          }
+          return secureStorage.store.has(key);
+        });
+
+        await expect(svc.migrate()).resolves.not.toThrow();
+
+        expect(secureStorage.store.get(SecureStorageKeys.entra)).toBe("entra-fallback-value");
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+    });
+
+    describe("azure fallback (no entra, only azure in directoryConfigurations)", () => {
+      it("populates directoryEntra from azure config when entra is absent", async () => {
+        const userId = "user-abc-123";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            azure: { tenant: "tenant-id", applicationId: "app-id" },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.directoryEntra)).toMatchObject({
+          tenant: "tenant-id",
+          applicationId: "app-id",
+        });
+      });
+
+      it("prefers entra over azure when both are present", async () => {
+        const userId = "user-abc-123";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directoryConfigurations: {
+            entra: { tenant: "entra-tenant", applicationId: "entra-app" },
+            azure: { tenant: "azure-tenant", applicationId: "azure-app" },
+          },
+          directorySettings: {},
+          settings: {},
+        });
+
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.directoryEntra)).toMatchObject({
+          tenant: "entra-tenant",
+          applicationId: "entra-app",
+        });
+      });
+    });
+
+    describe("partial data (only some fields populated)", () => {
+      it("migrates only the fields present without throwing", async () => {
+        const userId = "user-abc-123";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directorySettings: {
+            organizationId: "org-456",
+            directoryType: DirectoryType.GSuite,
+          },
+          // No directoryConfigurations, no globals, no settings
+        });
+
+        await expect(svc.migrate()).resolves.not.toThrow();
+
+        expect(storage.store.get(StorageKeys.organizationId)).toBe("org-456");
+        expect(storage.store.get(StorageKeys.directoryType)).toBe(DirectoryType.GSuite);
+        // No directory configs written
+        expect(storage.store.has(StorageKeys.directoryLdap)).toBe(false);
+        expect(storage.store.has(StorageKeys.directoryGsuite)).toBe(false);
+        // No window settings written
+        expect(storage.store.has(StorageKeys.window)).toBe(false);
+        // stateVersion still updated
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+    });
+
+    describe("useSecureStorageForSecrets = false", () => {
+      it("does not migrate or remove {userId}_* secure storage keys", async () => {
+        const userId = "user-abc-123";
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Four);
+        storage.store.set("activeUserId", userId);
+        storage.store.set(userId, {
+          profile: {},
+          keys: {},
+          directorySettings: { organizationId: "org-789" },
+        });
+        secureStorage.store.set(`${userId}_accessToken`, "access-tok");
+        secureStorage.store.set(`${userId}_ldapPassword`, "ldap-pass");
+
+        // Access migrateStateFrom4To5 via a subclass to pass false
+        class TestableService extends StateMigrationService {
+          async runMigration(): Promise<void> {
+            await this.migrateStateFrom3To5(false);
+          }
+        }
+        const testSvc = new TestableService(storage, secureStorage, makeLogService());
+        await testSvc.runMigration();
+
+        // Old keys NOT removed
+        expect(secureStorage.store.has(`${userId}_accessToken`)).toBe(true);
+        expect(secureStorage.store.has(`${userId}_ldapPassword`)).toBe(true);
+        // New flat keys NOT written
+        expect(secureStorage.store.has(SecureStorageKeys.accessToken)).toBe(false);
+        expect(secureStorage.store.has(SecureStorageKeys.ldap)).toBe(false);
+      });
+    });
+
+    describe("migrateStateFrom5To6()", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { passwords } = require("dc-native");
+
+      beforeEach(() => {
+        jest.clearAllMocks();
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Five);
+      });
+
+      it("calls migrateKeytarPassword with the new flat SecureStorageKeys", async () => {
+        await svc.migrate();
+
+        const calledKeys = passwords.migrateKeytarPassword.mock.calls.map(
+          (c: [string, string]) => c[1],
+        );
+        expect(calledKeys).toEqual(
+          expect.arrayContaining([
+            SecureStorageKeys.ldap,
+            SecureStorageKeys.gsuite,
+            SecureStorageKeys.azure,
+            SecureStorageKeys.entra,
+            SecureStorageKeys.okta,
+            SecureStorageKeys.oneLogin,
+          ]),
+        );
+      });
+
+      it("does not call migrateKeytarPassword with new-style {userId}_secret* keys", async () => {
+        const userId = "user-abc-123";
+        storage.store.set("activeUserId", userId);
+
+        await svc.migrate();
+
+        const calledKeys = passwords.migrateKeytarPassword.mock.calls.map(
+          (c: [string, string]) => c[1],
+        );
+        // None of the called keys should use the new SecureStorageKeys values as a suffix
+        const badKeys = calledKeys.filter(
+          (key: string) =>
+            key.startsWith(`${userId}_secret`) ||
+            key === `${userId}_${SecureStorageKeys.ldap}` ||
+            key === `${userId}_${SecureStorageKeys.gsuite}`,
+        );
+        expect(badKeys).toHaveLength(0);
+      });
+
+      it("bumps stateVersion to Ten (5→6→7→8→9→10)", async () => {
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("logs an error when migrateKeytarPassword returns an error field", async () => {
+        passwords.migrateKeytarPassword.mockResolvedValueOnce({
+          migrated: false,
+          error: "ERROR_ACCESS_DENIED",
+        });
+
+        await svc.migrate();
+
+        expect(logService.error).toHaveBeenCalledWith(
+          expect.stringContaining("ERROR_ACCESS_DENIED"),
+        );
+      });
+    });
+
+    describe("migrateStateFrom6To7()", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { passwords } = require("dc-native");
+      const userId = "user-stuck-at-v6";
+      const originalPlatform = process.platform;
+
+      beforeEach(() => {
+        jest.clearAllMocks();
+        Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Six);
+        storage.store.set("activeUserId", userId);
+
+        // readKeytarPassword returns the raw Credential Manager blob verbatim — a JSON-encoded
+        // string, matching what the old KeytarSecureStorageService wrote via JSON.stringify().
+        passwords.readKeytarPassword.mockImplementation((_service: string, account: string) => {
+          const values: Record<string, string> = {
+            [`${userId}_ldapPassword`]: JSON.stringify("ldap-pass"),
+            [`${userId}_entraIdKey`]: JSON.stringify("entra-key"),
+            [`${userId}_entraKey`]: JSON.stringify("entra-fallback"),
+            [`${userId}_oktaToken`]: JSON.stringify("okta-token"),
+          };
+          return Promise.resolve(values[account] ?? null);
+        });
+
+        secureStorage.store.set(`${userId}_ldapPassword`, "ldap-pass");
+        secureStorage.store.set(`${userId}_entraIdKey`, "entra-key");
+        secureStorage.store.set(`${userId}_entraKey`, "entra-fallback");
+        secureStorage.store.set(`${userId}_oktaToken`, "okta-token");
+      });
+
+      afterEach(() => {
+        Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+      });
+
+      it("calls readKeytarPassword for each old {userId}_* key", async () => {
+        await svc.migrate();
+
+        const calledKeys = passwords.readKeytarPassword.mock.calls.map(
+          (c: [string, string]) => c[1],
+        );
+        expect(calledKeys).toEqual(
+          expect.arrayContaining([
+            `${userId}_ldapPassword`,
+            `${userId}_gsuitePrivateKey`,
+            `${userId}_azureKey`,
+            `${userId}_entraIdKey`,
+            `${userId}_oktaToken`,
+            `${userId}_oneLoginClientSecret`,
+          ]),
+        );
+        // _entraKey is skipped because _entraIdKey is tried first and succeeds
+        expect(calledKeys).not.toContain(`${userId}_entraKey`);
+      });
+
+      it("does not call migrateKeytarPassword for old {userId}_* keys", async () => {
+        await svc.migrate();
+
+        const calledKeys = passwords.migrateKeytarPassword.mock.calls.map(
+          (c: [string, string]) => c[1],
+        );
+        expect(calledKeys).not.toContain(`${userId}_ldapPassword`);
+        expect(calledKeys).not.toContain(`${userId}_entraIdKey`);
+        expect(calledKeys).not.toContain(`${userId}_oktaToken`);
+      });
+
+      it("copies old directory secret keys to flat keys via secureStorageService", async () => {
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.ldap)).toBe("ldap-pass");
+        expect(secureStorage.store.get(SecureStorageKeys.okta)).toBe("okta-token");
+      });
+
+      it("does not copy auth tokens — an absent flat token key means logged out, not un-migrated", async () => {
+        secureStorage.store.set(`${userId}_accessToken`, "stale-access-tok");
+        secureStorage.store.set(`${userId}_refreshToken`, "stale-refresh-tok");
+        secureStorage.store.set(`${userId}_twoFactorToken`, "stale-2fa-tok");
+
+        await svc.migrate();
+
+        expect(secureStorage.store.has(SecureStorageKeys.accessToken)).toBe(false);
+        expect(secureStorage.store.has(SecureStorageKeys.refreshToken)).toBe(false);
+        expect(secureStorage.store.has(SecureStorageKeys.twoFactorToken)).toBe(false);
+      });
+
+      it("prefers _entraIdKey over _entraKey and keeps both old keys intact", async () => {
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.entra)).toBe("entra-key");
+        expect(secureStorage.store.has(`${userId}_entraIdKey`)).toBe(true);
+        expect(secureStorage.store.has(`${userId}_entraKey`)).toBe(true);
+      });
+
+      it("falls back to _entraKey when _entraIdKey is absent from keytar", async () => {
+        passwords.readKeytarPassword.mockImplementation((_service: string, account: string) => {
+          const values: Record<string, string> = {
+            [`${userId}_entraKey`]: JSON.stringify("entra-fallback-value"),
+          };
+          return Promise.resolve(values[account] ?? null);
+        });
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.entra)).toBe("entra-fallback-value");
+      });
+
+      it("keeps old {userId}_* keys intact after migration", async () => {
+        await svc.migrate();
+
+        expect(secureStorage.store.has(`${userId}_ldapPassword`)).toBe(true);
+        expect(secureStorage.store.has(`${userId}_oktaToken`)).toBe(true);
+      });
+
+      it("bumps stateVersion to Ten (Latest)", async () => {
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("does not overwrite an existing flat key with an old {userId}_* value", async () => {
+        secureStorage.store.set(SecureStorageKeys.ldap, "existing-ldap-pass");
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.ldap)).toBe("existing-ldap-pass");
+      });
+
+      it("does nothing to secure storage when activeUserId is absent", async () => {
+        storage.store.delete("activeUserId");
+        const secureSnapshot = new Map(secureStorage.store);
+
+        await svc.migrate();
+
+        expect(secureStorage.store).toEqual(secureSnapshot);
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("skips writing a key when readKeytarPassword returns null (credential not found)", async () => {
+        passwords.readKeytarPassword.mockResolvedValue(null);
+
+        await svc.migrate();
+
+        expect(secureStorage.store.has(SecureStorageKeys.ldap)).toBe(false);
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("logs a save failure by key name and still migrates the other keys", async () => {
+        const save = secureStorage.save.bind(secureStorage);
+        jest
+          .spyOn(secureStorage, "save")
+          .mockImplementation((key, obj) =>
+            key === SecureStorageKeys.ldap
+              ? Promise.reject(new Error("too large for Credential Manager"))
+              : save(key, obj),
+          );
+
+        await expect(svc.migrate()).resolves.toBeUndefined();
+
+        expect(logService.error).toHaveBeenCalledWith(
+          expect.stringContaining(`${userId}_ldapPassword`),
+        );
+        expect(JSON.stringify((logService.error as jest.Mock).mock.calls)).not.toContain(
+          "ldap-pass",
+        );
+        expect(secureStorage.store.has(SecureStorageKeys.ldap)).toBe(false);
+        expect(secureStorage.store.get(SecureStorageKeys.okta)).toBe("okta-token");
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("skips all secure storage work and just bumps version on non-Windows", async () => {
+        Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+        const secureSnapshot = new Map(secureStorage.store);
+
+        await svc.migrate();
+
+        expect(secureStorage.store).toEqual(secureSnapshot);
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("skips readKeytarPassword and does not write secrets when useSecureStorageForSecrets = false (plaintext mode)", async () => {
+        const plaintextSvc = makeService(storage, secureStorage, false);
+        const secureSnapshot = new Map(secureStorage.store);
+
+        await plaintextSvc.migrate();
+
+        expect(passwords.readKeytarPassword).not.toHaveBeenCalled();
+        expect(secureStorage.store).toEqual(secureSnapshot);
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("does not throw and recovers from keytar when has(newKey) rejects on an undecodable legacy blob", async () => {
+        secureStorage.store.set(`${userId}_gsuitePrivateKey`, "undecodable-blob");
+        passwords.readKeytarPassword.mockImplementation((_service: string, account: string) => {
+          const values: Record<string, string> = {
+            [`${userId}_gsuitePrivateKey`]: JSON.stringify("gsuite-key"),
+          };
+          return Promise.resolve(values[account] ?? null);
+        });
+        jest.spyOn(secureStorage, "has").mockImplementation(async (key) => {
+          if (key === SecureStorageKeys.gsuite) {
+            throw new Error("Credential blob is not valid UTF-16.");
+          }
+          return secureStorage.store.has(key as string);
+        });
+
+        await expect(svc.migrate()).resolves.not.toThrow();
+
+        expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe("gsuite-key");
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+    });
+
+    describe("migrateStateFrom7To8()", () => {
+      beforeEach(() => {
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Seven);
+      });
+
+      it("backfills inviteUsersAfterProvisioning = true onto an existing sync config missing the flag", async () => {
+        storage.store.set(StorageKeys.sync, { users: true, groups: true });
+
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.sync)).toEqual({
+          users: true,
+          groups: true,
+          inviteUsersAfterProvisioning: true,
+        });
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("leaves an explicit inviteUsersAfterProvisioning = false untouched", async () => {
+        storage.store.set(StorageKeys.sync, { users: true, inviteUsersAfterProvisioning: false });
+
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.sync)).toEqual({
+          users: true,
+          inviteUsersAfterProvisioning: false,
+        });
+      });
+
+      it("leaves an explicit inviteUsersAfterProvisioning = true untouched", async () => {
+        storage.store.set(StorageKeys.sync, { users: true, inviteUsersAfterProvisioning: true });
+
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.sync)).toEqual({
+          users: true,
+          inviteUsersAfterProvisioning: true,
+        });
+      });
+
+      it("does not create a sync config when none exists", async () => {
+        await svc.migrate();
+
+        expect(storage.store.has(StorageKeys.sync)).toBe(false);
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+    });
+
+    describe("migrateStateFrom8To9()", () => {
+      const originalPlatform = process.platform;
+
+      function setPlatform(platform: string) {
+        Object.defineProperty(process, "platform", { value: platform, configurable: true });
+      }
+
+      beforeEach(() => {
+        jest.restoreAllMocks();
+        setPlatform("darwin");
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Eight);
+      });
+
+      afterEach(() => {
+        setPlatform(originalPlatform);
+      });
+
+      it("re-homes each auth token by removing and re-saving it", async () => {
+        secureStorage.store.set(SecureStorageKeys.accessToken, "access");
+        const removeSpy = jest.spyOn(secureStorage, "remove");
+        const saveSpy = jest.spyOn(secureStorage, "save");
+
+        await svc.migrate();
+
+        expect(removeSpy).toHaveBeenCalledWith(SecureStorageKeys.accessToken);
+        expect(saveSpy).toHaveBeenCalledWith(SecureStorageKeys.accessToken, "access");
+      });
+
+      it("preserves every re-homed value", async () => {
+        secureStorage.store.set(SecureStorageKeys.accessToken, "access");
+        secureStorage.store.set(SecureStorageKeys.refreshToken, "refresh");
+        secureStorage.store.set(SecureStorageKeys.apiKeyClientSecret, "client-secret");
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.accessToken)).toBe("access");
+        expect(secureStorage.store.get(SecureStorageKeys.refreshToken)).toBe("refresh");
+        expect(secureStorage.store.get(SecureStorageKeys.apiKeyClientSecret)).toBe("client-secret");
+      });
+
+      it("removes before saving so the entry is recreated by this process", async () => {
+        secureStorage.store.set(SecureStorageKeys.accessToken, "access");
+        const order: string[] = [];
+        jest.spyOn(secureStorage, "remove").mockImplementation(async (key) => {
+          if (key === SecureStorageKeys.accessToken) {
+            order.push("remove");
+          }
+        });
+        jest.spyOn(secureStorage, "save").mockImplementation(async (key) => {
+          if (key === SecureStorageKeys.accessToken) {
+            order.push("save");
+          }
+        });
+
+        await svc.migrate();
+
+        expect(order).toEqual(["remove", "save"]);
+      });
+
+      it("never removes a key that cannot be read", async () => {
+        // Nothing seeded, so every get() returns null.
+        const removeSpy = jest.spyOn(secureStorage, "remove");
+
+        await svc.migrate();
+
+        expect(removeSpy).not.toHaveBeenCalled();
+      });
+
+      it("continues past a key that fails and still re-homes the others", async () => {
+        secureStorage.store.set(SecureStorageKeys.accessToken, "access");
+        secureStorage.store.set(SecureStorageKeys.refreshToken, "refresh");
+        const realSave = secureStorage.save.bind(secureStorage);
+        jest.spyOn(secureStorage, "save").mockImplementation(async (key, obj) => {
+          if (key === SecureStorageKeys.accessToken) {
+            throw new Error("Invalid attempt to change the owner of this item.");
+          }
+          return realSave(key, obj);
+        });
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.refreshToken)).toBe("refresh");
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("logs a failure by key name without throwing", async () => {
+        secureStorage.store.set(SecureStorageKeys.accessToken, "access");
+        jest.spyOn(secureStorage, "save").mockRejectedValue(new Error("keychain failure"));
+
+        await expect(svc.migrate()).resolves.toBeUndefined();
+
+        expect(logService.error).toHaveBeenCalledWith(
+          expect.stringContaining(SecureStorageKeys.accessToken),
+        );
+      });
+
+      it("does not log secret values", async () => {
+        const secret = "secret";
+        secureStorage.store.set(SecureStorageKeys.accessToken, secret);
+        jest.spyOn(secureStorage, "save").mockRejectedValue(new Error("keychain failure"));
+
+        await svc.migrate();
+
+        const logged = JSON.stringify([
+          (logService.error as jest.Mock).mock.calls,
+          (logService.info as jest.Mock).mock.calls,
+          (logService.warning as jest.Mock).mock.calls,
+        ]);
+        expect(logged).not.toContain(secret);
+      });
+
+      it("leaves directory secrets untouched", async () => {
+        // Directory secrets are keyed by a configuration id and recover on next save, so the
+        // migration deliberately does not delete and rewrite them.
+        storage.store.set(StorageKeys.directoryLdap, { id: "ldap-id-1" });
+        secureStorage.store.set(`${SecureStorageKeys.ldap}:ldap-id-1`, "ldap-secret");
+        secureStorage.store.set(SecureStorageKeys.okta, "okta-token");
+        const removeSpy = jest.spyOn(secureStorage, "remove");
+
+        await svc.migrate();
+
+        expect(removeSpy).not.toHaveBeenCalled();
+        expect(secureStorage.store.get(`${SecureStorageKeys.ldap}:ldap-id-1`)).toBe("ldap-secret");
+        expect(secureStorage.store.get(SecureStorageKeys.okta)).toBe("okta-token");
+      });
+
+      it("bumps stateVersion to Ten", async () => {
+        await svc.migrate();
+
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("touches no secure storage on non-macOS platforms", async () => {
+        setPlatform("win32");
+        secureStorage.store.set(SecureStorageKeys.accessToken, "access");
+        const removeSpy = jest.spyOn(secureStorage, "remove");
+
+        await svc.migrate();
+
+        expect(removeSpy).not.toHaveBeenCalled();
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("touches no secure storage when useSecureStorageForSecrets is false", async () => {
+        const plaintextSvc = makeService(storage, secureStorage, false, logService);
+        secureStorage.store.set(SecureStorageKeys.accessToken, "access");
+        const removeSpy = jest.spyOn(secureStorage, "remove");
+
+        await plaintextSvc.migrate();
+
+        expect(removeSpy).not.toHaveBeenCalled();
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+    });
+
+    describe("migrateStateFrom9To10()", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { passwords } = require("dc-native");
+      const userId = "user-at-v9";
+      const oldKey = `${userId}_gsuitePrivateKey`;
+      const privateKey = "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n";
+      const originalPlatform = process.platform;
+
+      function setPlatform(platform: string) {
+        Object.defineProperty(process, "platform", { value: platform, configurable: true });
+      }
+
+      beforeEach(() => {
+        jest.clearAllMocks();
+        jest.restoreAllMocks();
+        setPlatform("win32");
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Nine);
+        storage.store.set("activeUserId", userId);
+
+        // The raw keytar blob: JSON.stringify'd by the old KeytarSecureStorageService.
+        passwords.readKeytarPassword.mockImplementation((_service: string, account: string) =>
+          Promise.resolve(account === oldKey ? JSON.stringify(privateKey) : null),
+        );
+      });
+
+      afterEach(() => {
+        setPlatform(originalPlatform);
+        passwords.readKeytarPassword.mockResolvedValue(null);
+      });
+
+      it("reads the keytar Google Workspace private key from its old key", async () => {
+        await svc.migrate();
+
+        expect(passwords.readKeytarPassword).toHaveBeenCalledWith(expect.any(String), oldKey);
+      });
+
+      it("writes the private key to SecureStorageKeys.gsuite", async () => {
+        const saveSpy = jest.spyOn(secureStorage, "save");
+
+        await svc.migrate();
+
+        expect(saveSpy).toHaveBeenCalledWith(SecureStorageKeys.gsuite, privateKey);
+        expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe(privateKey);
+      });
+
+      it("uses the keytar value as is when it is not JSON", async () => {
+        passwords.readKeytarPassword.mockResolvedValue(privateKey);
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe(privateKey);
+      });
+
+      it("does not replace a legacy gsuite secret that can be read", async () => {
+        secureStorage.store.set(SecureStorageKeys.gsuite, "current-key");
+
+        await svc.migrate();
+
+        expect(passwords.readKeytarPassword).not.toHaveBeenCalled();
+        expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe("current-key");
+      });
+
+      it("does not write when the active configuration's scoped secret can be read", async () => {
+        storage.store.set(StorageKeys.directoryGsuite, { id: "gsuite-id-1" });
+        secureStorage.store.set(`${SecureStorageKeys.gsuite}:gsuite-id-1`, "current-key");
+        const saveSpy = jest.spyOn(secureStorage, "save");
+
+        await svc.migrate();
+
+        expect(saveSpy).not.toHaveBeenCalled();
+        expect(secureStorage.store.has(SecureStorageKeys.gsuite)).toBe(false);
+      });
+
+      it("replaces a gsuite secret that cannot be read", async () => {
+        secureStorage.store.set(SecureStorageKeys.gsuite, "unreadable");
+        jest.spyOn(secureStorage, "get").mockRejectedValue(new Error("not valid UTF-16"));
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe(privateKey);
+      });
+
+      it("writes nothing when there is no keytar private key", async () => {
+        passwords.readKeytarPassword.mockResolvedValue(null);
+        const saveSpy = jest.spyOn(secureStorage, "save");
+
+        await svc.migrate();
+
+        expect(saveSpy).not.toHaveBeenCalled();
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("logs a failure by key name without throwing or logging the secret", async () => {
+        jest.spyOn(secureStorage, "save").mockRejectedValue(new Error("too large"));
+
+        await expect(svc.migrate()).resolves.toBeUndefined();
+
+        expect(logService.error).toHaveBeenCalledWith(expect.stringContaining(oldKey));
+        expect(JSON.stringify((logService.error as jest.Mock).mock.calls)).not.toContain("abc");
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("logs a keytar read failure without throwing", async () => {
+        passwords.readKeytarPassword.mockRejectedValue(new Error("Credential Manager failure"));
+
+        await expect(svc.migrate()).resolves.toBeUndefined();
+
+        expect(logService.error).toHaveBeenCalledWith(expect.stringContaining(oldKey));
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("does nothing when activeUserId is absent", async () => {
+        storage.store.delete("activeUserId");
+
+        await svc.migrate();
+
+        expect(passwords.readKeytarPassword).not.toHaveBeenCalled();
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("touches no secure storage on non-Windows platforms", async () => {
+        setPlatform("darwin");
+
+        await svc.migrate();
+
+        expect(passwords.readKeytarPassword).not.toHaveBeenCalled();
+        expect(secureStorage.store.has(SecureStorageKeys.gsuite)).toBe(false);
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("touches no secure storage when useSecureStorageForSecrets is false", async () => {
+        const plaintextSvc = makeService(storage, secureStorage, false, logService);
+
+        await plaintextSvc.migrate();
+
+        expect(passwords.readKeytarPassword).not.toHaveBeenCalled();
+        expect(secureStorage.store.has(SecureStorageKeys.gsuite)).toBe(false);
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("leaves the key alone when 6→7 already copied it", async () => {
+        // From v6, the 6→7 migration copies the same keytar key with save(), and 9→10 then finds
+        // the key readable and leaves it alone.
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Six);
+        const saveSpy = jest.spyOn(secureStorage, "save");
+
+        await svc.migrate();
+
+        expect(saveSpy).toHaveBeenCalledWith(SecureStorageKeys.gsuite, privateKey);
+        expect(saveSpy.mock.calls.filter(([key]) => key === SecureStorageKeys.gsuite)).toHaveLength(
+          1,
+        );
+      });
+
+      it("writes when the active configuration's scoped secret and the legacy secret are both absent", async () => {
+        storage.store.set(StorageKeys.directoryGsuite, { id: "gsuite-id-1" });
+
+        await svc.migrate();
+
+        expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe(privateKey);
+      });
+
+      it("does not write when both the scoped and legacy secrets can be read", async () => {
+        storage.store.set(StorageKeys.directoryGsuite, { id: "gsuite-id-1" });
+        secureStorage.store.set(`${SecureStorageKeys.gsuite}:gsuite-id-1`, "scoped-key");
+        secureStorage.store.set(SecureStorageKeys.gsuite, "legacy-key");
+        const saveSpy = jest.spyOn(secureStorage, "save");
+
+        await svc.migrate();
+
+        expect(saveSpy).not.toHaveBeenCalled();
+        expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe("legacy-key");
+      });
+
+      it.each([StateVersion.Four, StateVersion.Five, StateVersion.Six])(
+        "recovers the private key from v%s when 6→7 cannot save it as UTF-16",
+        async (startVersion) => {
+          // Installs upgrading from an older build wrote the key as UTF-16 through desktop_core,
+          // and a Google Workspace private key is too large for Credential Manager at that size,
+          // so the 6→7 write rejected. 9→10 retries it, now that writes are UTF-8.
+          storage.store.set(StorageKeys.stateVersion, startVersion);
+          const save = secureStorage.save.bind(secureStorage);
+          let firstGsuiteWrite = true;
+          const saveSpy = jest.spyOn(secureStorage, "save").mockImplementation((key, obj) => {
+            if (key === SecureStorageKeys.gsuite && firstGsuiteWrite) {
+              firstGsuiteWrite = false;
+              return Promise.reject(new Error("too large for Credential Manager"));
+            }
+            return save(key, obj);
+          });
+
+          await expect(svc.migrate()).resolves.toBeUndefined();
+
+          expect(saveSpy).toHaveBeenCalledWith(SecureStorageKeys.gsuite, privateKey);
+          expect(secureStorage.store.get(SecureStorageKeys.gsuite)).toBe(privateKey);
+          expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+        },
+      );
+    });
+
+    describe("stampVersion()", () => {
+      it("writes stateVersion = Latest when stateVersion is absent (fresh install)", async () => {
+        await svc.stampVersion();
+
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
+      });
+
+      it("does not overwrite an existing stateVersion", async () => {
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Five);
+
+        await svc.stampVersion();
+
+        expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Five);
+      });
+    });
+
+    describe("getCurrentStateVersion() (tested indirectly via needsMigration)", () => {
+      it("returns StateVersion.Latest (no migration needed) when both flat key and globals are absent (fresh install)", async () => {
+        // Completely empty storage — treat as fresh install
+        expect(await svc.needsMigration()).toBe(false);
+      });
+
+      it("prefers flat stateVersion key over globals.stateVersion", async () => {
+        storage.store.set(StorageKeys.stateVersion, StateVersion.Ten);
+        storage.store.set("global", { stateVersion: StateVersion.Four });
+
+        // Flat key wins → at latest → no migration needed
+        expect(await svc.needsMigration()).toBe(false);
+      });
+    });
+  });
+});

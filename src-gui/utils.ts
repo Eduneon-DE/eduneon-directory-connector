@@ -1,0 +1,47 @@
+export function isDev() {
+  // ref: https://github.com/sindresorhus/electron-is-dev
+  if ("ELECTRON_IS_DEV" in process.env) {
+    return parseInt(process.env.ELECTRON_IS_DEV, 10) === 1;
+  }
+  return process.defaultApp || /node_modules[\\/]electron[\\/]/.test(process.execPath);
+}
+
+export function isAppImage() {
+  return process.platform === "linux" && "APPIMAGE" in process.env;
+}
+
+export function isMac() {
+  return process.platform === "darwin";
+}
+
+export function isMacAppStore() {
+  return isMac() && process.mas === true;
+}
+
+export function isWindowsStore() {
+  return process.platform === "win32" && process.windowsStore === true;
+}
+
+export function isSnapStore() {
+  return process.platform === "linux" && process.env.SNAP_USER_DATA != null;
+}
+
+export function isWindowsPortable() {
+  return process.platform === "win32" && process.env.PORTABLE_EXECUTABLE_DIR != null;
+}
+
+/**
+ * Sanitize user agent so external resources used by the app can't built data on our users.
+ */
+export function cleanUserAgent(userAgent: string): string {
+  const userAgentItem = (startString: string, endString: string) => {
+    const startIndex = userAgent.indexOf(startString);
+    return userAgent.substring(startIndex, userAgent.indexOf(endString, startIndex) + 1);
+  };
+  const systemInformation = "(Windows NT 10.0; Win64; x64)";
+
+  return userAgent
+    .replace(userAgentItem("(", ")"), systemInformation)
+    .replace(/\S*eduneon\S*\s?/gi, "")
+    .replace(userAgentItem("Electron", " "), "");
+}

@@ -1,0 +1,145 @@
+import {
+  APP_INITIALIZER,
+  ApplicationRef,
+  ComponentFactoryResolver,
+  EnvironmentProviders,
+  Injector,
+  Provider,
+} from "@angular/core";
+
+import { BroadcasterService as BroadcasterServiceAbstraction } from "@/libs/abstractions/broadcaster.service";
+import { EnvironmentService as EnvironmentServiceAbstraction } from "@/libs/abstractions/environment.service";
+import { I18nService as I18nServiceAbstraction } from "@/libs/abstractions/i18n.service";
+import { LogService as LogServiceAbstraction } from "@/libs/abstractions/log.service";
+import { MessagingService as MessagingServiceAbstraction } from "@/libs/abstractions/messaging.service";
+import { PlatformUtilsService as PlatformUtilsServiceAbstraction } from "@/libs/abstractions/platformUtils.service";
+import {
+  SecureStorageService,
+  StorageService as StorageServiceAbstraction,
+} from "@/libs/abstractions/storage.service";
+import { DefaultEnvironmentService as EnvironmentServiceImplementation } from "@/libs/services/environment/environment.service";
+import {
+  DefaultStateService,
+  StateService,
+} from "@/libs/services/state-service/default-state.service";
+
+import { BroadcasterService as BroadcasterServiceImplementation } from "@/src-gui/angular/services/broadcaster.service";
+import { ModalService } from "@/src-gui/angular/services/modal.service";
+import { ValidationService } from "@/src-gui/angular/services/validation.service";
+import { RendererAuthService } from "@/src-gui/services/electron/rendererAuth.service";
+import { RendererI18nService } from "@/src-gui/services/electron/rendererI18n.service";
+import { RendererLogService } from "@/src-gui/services/electron/rendererLog.service";
+import { RendererMessagingService } from "@/src-gui/services/electron/rendererMessaging.service";
+import { RendererPlatformUtilsService } from "@/src-gui/services/electron/rendererPlatformUtils.service";
+import { RendererSecureStorageService } from "@/src-gui/services/electron/rendererSecureStorage.service";
+import { RendererStorageService } from "@/src-gui/services/electron/rendererStorage.service";
+import { RendererSyncService } from "@/src-gui/services/electron/rendererSync.service";
+
+import { AuthGuardService } from "./auth-guard.service";
+import { initFactory } from "./init.factory";
+import { SafeInjectionToken, SECURE_STORAGE, WINDOW } from "./injection-tokens";
+import { LaunchGuardService } from "./launch-guard.service";
+import { SafeProvider, safeProvider } from "./safe-provider";
+
+export { initFactory };
+
+export const servicesProviders: (Provider | EnvironmentProviders)[] = [
+  safeProvider({
+    provide: APP_INITIALIZER as SafeInjectionToken<() => void>,
+    useFactory: initFactory,
+    deps: [Injector],
+    multi: true,
+  }),
+  safeProvider({
+    provide: WINDOW,
+    useValue: window,
+  }),
+  safeProvider({
+    provide: LogServiceAbstraction,
+    useFactory: () => new RendererLogService(ipc.process.isDev),
+    deps: [],
+  }),
+  safeProvider({
+    provide: I18nServiceAbstraction,
+    useFactory: (window: Window) => new RendererI18nService(window.navigator.language, "./locales"),
+    deps: [WINDOW],
+  }),
+  safeProvider({
+    provide: BroadcasterServiceAbstraction,
+    useClass: BroadcasterServiceImplementation,
+    deps: [],
+  }),
+  safeProvider({
+    provide: MessagingServiceAbstraction,
+    useClass: RendererMessagingService,
+    deps: [BroadcasterServiceAbstraction],
+  }),
+  safeProvider({
+    provide: StorageServiceAbstraction,
+    useClass: RendererStorageService,
+    deps: [],
+  }),
+  safeProvider({
+    provide: SECURE_STORAGE,
+    useClass: RendererSecureStorageService,
+    deps: [],
+  }),
+  safeProvider({
+    provide: PlatformUtilsServiceAbstraction,
+    useFactory: (
+      i18nService: I18nServiceAbstraction,
+      messagingService: MessagingServiceAbstraction,
+    ) => new RendererPlatformUtilsService(i18nService, messagingService),
+    deps: [I18nServiceAbstraction, MessagingServiceAbstraction],
+  }),
+  safeProvider({
+    provide: RendererAuthService,
+    useClass: RendererAuthService,
+    deps: [],
+  }),
+  safeProvider({
+    provide: RendererSyncService,
+    useClass: RendererSyncService,
+    deps: [],
+  }),
+  safeProvider({
+    provide: EnvironmentServiceAbstraction,
+    useClass: EnvironmentServiceImplementation,
+    deps: [StateService],
+  }),
+  safeProvider({
+    provide: StateService,
+    useFactory: (
+      storageService: StorageServiceAbstraction,
+      secureStorageService: SecureStorageService,
+      logService: LogServiceAbstraction,
+    ) =>
+      // TODO: Remove renderer-side StateService entirely — it proxies all reads/writes over
+      // IPC to the main process and should be replaced with explicit IPC handlers per property.
+
+      new DefaultStateService(
+        storageService,
+        secureStorageService,
+        logService,
+        {
+          needsMigration: () => Promise.resolve(false),
+          migrate: () => Promise.resolve(),
+          stampVersion: () => Promise.resolve(),
+        },
+        true,
+      ),
+    deps: [StorageServiceAbstraction, SECURE_STORAGE, LogServiceAbstraction],
+  }),
+  safeProvider(AuthGuardService),
+  safeProvider(LaunchGuardService),
+  safeProvider({
+    provide: ModalService,
+    useClass: ModalService,
+    deps: [ComponentFactoryResolver, ApplicationRef, Injector],
+  }),
+  safeProvider({
+    provide: ValidationService,
+    useClass: ValidationService,
+    deps: [I18nServiceAbstraction, PlatformUtilsServiceAbstraction],
+  }),
+] satisfies SafeProvider[];
