@@ -2,7 +2,10 @@
   <form #form="appApiAction" (ngSubmit)="submit()" [appApiAction]="formPromise()">
     <div class="row justify-content-center">
       <div class="col-md-8 col-lg-6">
-        <p class="text-center fw-bold">{{ "welcome" | i18n }}</p>
+        <div class="text-center mt-4 mb-3">
+          <img src="images/logo-mark.png" alt="" height="40" />
+        </div>
+        <p class="text-center fw-semibold fs-5">{{ "welcome" | i18n }}</p>
         <p class="text-center">{{ "logInDesc" | i18n }}</p>
         <div class="card">
           <h5 class="card-header">{{ "logIn" | i18n }}</h5>
