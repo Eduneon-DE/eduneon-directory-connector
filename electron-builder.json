@@ -1,10 +1,10 @@
 {
   "extraMetadata": {
-    "name": "bitwarden-directory-connector"
+    "name": "eduneon-directory-connector"
   },
-  "productName": "Bitwarden Directory Connector",
-  "appId": "com.bitwarden.directory-connector",
-  "copyright": "Copyright © 2015-2026 Bitwarden Inc.",
+  "productName": "Eduneon Directory Connector",
+  "appId": "de.eduneon.directory-connector",
+  "copyright": "Copyright © 2026 Eduneon. Based on Bitwarden Directory Connector, © 2015-2026 Bitwarden Inc. GPL-3.0.",
   "directories": {
     "buildResources": "resources",
     "output": "dist",
@@ -13,7 +13,7 @@
   "afterSign": "scripts/notarize.mjs",
   "asarUnpack": ["node_modules/dc-native/**"],
   "mac": {
-    "artifactName": "Bitwarden-Connector-${version}-${arch}.${ext}",
+    "artifactName": "Eduneon-Directory-Connector-${version}-${arch}.${ext}",
     "category": "public.app-category.productivity",
     "gatekeeperAssess": false,
     "hardenedRuntime": true,
@@ -29,11 +29,11 @@
   },
   "linux": {
     "category": "Utility",
-    "synopsis": "Sync your user directory to your Bitwarden organization.",
+    "synopsis": "Sync users and groups from your directory to Eduneon.",
     "target": ["AppImage"]
   },
   "dmg": {
-    "artifactName": "Bitwarden-Connector-${version}-${arch}.${ext}",
+    "artifactName": "Eduneon-Directory-Connector-${version}-${arch}.${ext}",
     "icon": "dmg.icns",
     "contents": [
       {
@@ -57,14 +57,22 @@
     "oneClick": false,
     "perMachine": true,
     "allowToChangeInstallationDirectory": true,
-    "artifactName": "Bitwarden-Connector-Installer-${version}.${ext}",
+    "artifactName": "Eduneon-Directory-Connector-Setup-${version}.${ext}",
     "uninstallDisplayName": "${productName}",
     "deleteAppDataOnUninstall": true
   },
   "portable": {
-    "artifactName": "Bitwarden-Connector-Portable-${version}.${ext}"
+    "artifactName": "Eduneon-Directory-Connector-Portable-${version}.${ext}"
   },
   "appImage": {
-    "artifactName": "Bitwarden-Connector-${version}-${arch}.${ext}"
-  }
+    "artifactName": "Eduneon-Directory-Connector-${version}-${arch}.${ext}"
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "Eduneon-DE",
+      "repo": "eduneon-directory-connector",
+      "releaseType": "release"
+    }
+  ]
 }

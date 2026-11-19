@@ -63,10 +63,10 @@ export class Main {
   constructor() {
     // Set paths for portable builds
     let appDataPath = null;
-    if (process.env.BITWARDEN_CONNECTOR_APPDATA_DIR != null) {
-      appDataPath = process.env.BITWARDEN_CONNECTOR_APPDATA_DIR;
+    if (process.env.EDUNEON_DC_APPDATA_DIR != null) {
+      appDataPath = process.env.EDUNEON_DC_APPDATA_DIR;
     } else if (process.platform === "win32" && process.env.PORTABLE_EXECUTABLE_DIR != null) {
-      appDataPath = path.join(process.env.PORTABLE_EXECUTABLE_DIR, "bitwarden-connector-appdata");
+      appDataPath = path.join(process.env.PORTABLE_EXECUTABLE_DIR, "eduneon-connector-appdata");
     }
 
     if (appDataPath != null) {
@@ -108,7 +108,7 @@ export class Main {
     const tokenService = new TokenService(secureStorageService);
     const appIdService = new AppIdService(this.storageService);
 
-    const customUserAgent = `Bitwarden_DC/${app.getVersion()} (${platformUtilsService.getDeviceString().toUpperCase()})`;
+    const customUserAgent = `Eduneon_DC/${app.getVersion()} (${platformUtilsService.getDeviceString().toUpperCase()})`;
 
     const apiService = new NodeApiService(
       tokenService,
@@ -198,7 +198,7 @@ export class Main {
     this.updaterMain = new UpdaterMain(
       this.i18nService,
       this.windowMain,
-      "directory-connector",
+      "eduneon-directory-connector",
       () => {
         this.messagingService.send("checkingForUpdate");
       },
@@ -208,7 +208,7 @@ export class Main {
       () => {
         this.messagingService.send("doneCheckingForUpdate");
       },
-      "bitwardenDirectoryConnector",
+      "appName",
     );
 
     this.trayMain = new TrayMain(this.windowMain, this.i18nService, this.stateService);
@@ -223,9 +223,7 @@ export class Main {
       this.messagingMain.onMessage(message);
     });
 
-    this.credentialStorageListener = new DCCredentialStorageListener(
-      "Bitwarden Directory Connector",
-    );
+    this.credentialStorageListener = new DCCredentialStorageListener("Eduneon Directory Connector");
   }
 
   async bootstrap() {
@@ -241,10 +239,10 @@ export class Main {
       this.menuMain.init();
       this.messagingMain.init();
       await this.updaterMain.init();
-      await this.trayMain.init(this.i18nService.t("bitwardenDirectoryConnector"));
+      await this.trayMain.init(this.i18nService.t("appName"));
 
-      if (!app.isDefaultProtocolClient("bwdc")) {
-        app.setAsDefaultProtocolClient("bwdc");
+      if (!app.isDefaultProtocolClient("eduneon-dc")) {
+        app.setAsDefaultProtocolClient("eduneon-dc");
       }
 
       app.on("open-url", (event, url) => {
@@ -260,7 +258,7 @@ export class Main {
 
   private processDeepLink(argv: string[]): void {
     argv
-      .filter((s) => s.indexOf("bwdc://") === 0)
+      .filter((s) => s.indexOf("eduneon-dc://") === 0)
       .forEach((s) => {
         const url = new URL(s);
         const code = url.searchParams.get("code");

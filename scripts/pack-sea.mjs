@@ -28,7 +28,7 @@ if (!platform || !validPlatforms.includes(platform)) {
   process.exit(1);
 }
 
-const binaryName = platform === "windows" ? "bwdc.exe" : "bwdc";
+const binaryName = platform === "windows" ? "eduneon-dc.exe" : "eduneon-dc";
 const outputDir = join(repoRoot, "dist-cli", platform);
 const outputBinary = join(outputDir, binaryName);
 const tempSeaConfig = join(repoRoot, `sea-config.${platform}.json`);
@@ -36,7 +36,7 @@ const tempSeaConfig = join(repoRoot, `sea-config.${platform}.json`);
 mkdirSync(outputDir, { recursive: true });
 
 const seaConfig = {
-  main: "./build-cli/bwdc.js",
+  main: "./build-cli/eduneon-dc.js",
   output: outputBinary,
   mainFormat: "module",
   disableExperimentalSEAWarning: true,

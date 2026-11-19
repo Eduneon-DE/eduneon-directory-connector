@@ -27,7 +27,7 @@
       "name": "Debug CLI",
       "protocol": "inspector",
       "cwd": "${workspaceFolder}",
-      "program": "${workspaceFolder}/build-cli/bwdc.js",
+      "program": "${workspaceFolder}/build-cli/eduneon-dc.js",
       "args": ["sync"]
     }
   ],

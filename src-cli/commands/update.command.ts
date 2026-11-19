@@ -21,7 +21,7 @@ export class UpdateCommand {
     const currentVersion = await this.platformUtilsService.getApplicationVersion();
 
     const response = await fetch(
-      "https://api.github.com/repos/bitwarden/" + this.repoName + "/releases/latest",
+      "https://api.github.com/repos/Eduneon-DE/" + this.repoName + "/releases/latest",
     );
     if (response.status === 200) {
       const responseJson = await response.json();
@@ -70,7 +70,7 @@ export class UpdateCommand {
 
       res.title = "A new version is available: " + tagName;
       if (downloadUrl == null) {
-        downloadUrl = "https://github.com/bitwarden/" + this.repoName + "/releases";
+        downloadUrl = "https://github.com/Eduneon-DE/" + this.repoName + "/releases";
       } else {
         res.raw = downloadUrl;
       }
@@ -89,7 +89,7 @@ export class UpdateCommand {
         } else {
           res.message +=
             "\n\nIf you installed this CLI through NPM " +
-            "you should update using `npm install -g @bitwarden/" +
+            "you should update using `npm install -g @eduneon/" +
             this.repoName +
             "`";
         }

@@ -16,7 +16,7 @@ import { NativeSecureStorageService } from "./nativeSecureStorage.service";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { passwords } = require("dc-native");
 
-const SERVICE_NAME = "Bitwarden Directory Connector";
+const SERVICE_NAME = "Eduneon Directory Connector";
 const OWNER_EDIT_ERROR = "Invalid attempt to change the owner of this item.";
 
 function makeLogService(): LogService {

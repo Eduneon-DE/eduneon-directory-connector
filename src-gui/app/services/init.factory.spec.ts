@@ -37,7 +37,7 @@ describe("initFactory", () => {
     logService = { error: jest.fn() };
     i18nService = {
       init: jest.fn().mockResolvedValue(undefined),
-      t: jest.fn().mockReturnValue("Bitwarden Directory Connector"),
+      t: jest.fn().mockReturnValue("Eduneon Directory Connector"),
       translationLocale: "en",
     };
     environmentService = { setUrlsFromStorage: jest.fn().mockResolvedValue(undefined) };

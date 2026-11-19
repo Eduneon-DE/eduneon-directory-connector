@@ -38,7 +38,7 @@ export function initFactory(injector: Injector): () => Promise<void> {
     const htmlEl = window.document.documentElement;
     htmlEl.classList.add("os_" + platformUtilsService.getDeviceString());
     htmlEl.classList.add("locale_" + i18nService.translationLocale);
-    window.document.title = i18nService.t("bitwardenDirectoryConnector");
+    window.document.title = i18nService.t("appName");
 
     let installAction = null;
     const installedVersion = await stateService.getInstalledVersion();

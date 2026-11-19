@@ -97,7 +97,7 @@ mod tests {
     use super::*;
     use windows::Win32::Security::Credentials::CredDeleteW;
 
-    const SERVICE: &str = "BitwardenDirectoryConnectorTest";
+    const SERVICE: &str = "EduneonDirectoryConnectorTest";
 
     fn cleanup(account: &str) {
         let target_name = U16CString::from_str(target_name(SERVICE, account)).unwrap();

@@ -2,7 +2,7 @@
 name = "dc_native"
 version = "0.1.0"
 edition = "2021"
-description = "Native keychain bindings for Bitwarden Directory Connector"
+description = "Native keychain bindings for Eduneon Directory Connector"
 license = "GPL-3.0"
 
 [lib]

@@ -1,6 +1,6 @@
 {
-  "bitwardenDirectoryConnector": {
-    "message": "Bitwarden Directory Connector"
+  "appName": {
+    "message": "Eduneon Directory Connector"
   },
   "emailAddress": {
     "message": "Email Address"
@@ -150,7 +150,7 @@
     "message": "Self-hosted Environment"
   },
   "selfHostedEnvironmentFooter": {
-    "message": "Specify the base URL of your on-premises hosted Bitwarden installation."
+    "message": "Specify the base URL of your Eduneon server."
   },
   "customEnvironment": {
     "message": "Custom Environment"
@@ -313,8 +313,8 @@
   "services": {
     "message": "Services"
   },
-  "hideBitwarden": {
-    "message": "Hide Bitwarden Directory Connector"
+  "hideApp": {
+    "message": "Hide Eduneon Directory Connector"
   },
   "hideOthers": {
     "message": "Hide Others"
@@ -322,8 +322,8 @@
   "showAll": {
     "message": "Show All"
   },
-  "quitBitwarden": {
-    "message": "Quit Bitwarden Directory Connector"
+  "quitApp": {
+    "message": "Quit Eduneon Directory Connector"
   },
   "window": {
     "message": "Window"
@@ -566,7 +566,7 @@
     "message": "Testing"
   },
   "testingDesc": {
-    "message": "You can run tests to see how your directory and sync settings are working. Tests will not sync to your Bitwarden organization."
+    "message": "You can run tests to see how your directory and sync settings are working. Tests will not send anything to Eduneon."
   },
   "testNow": {
     "message": "Test Now"
@@ -624,7 +624,7 @@
     "message": "Minimum sync interval is 5 minutes."
   },
   "welcome": {
-    "message": "Welcome to the Bitwarden Directory Connector"
+    "message": "Welcome to the Eduneon Directory Connector"
   },
   "logInDesc": {
     "message": "Log in with an organization API key below."
@@ -764,7 +764,7 @@
     "message": "Weak Master Password"
   },
   "weakMasterPasswordDesc": {
-    "message": "The master password you have chosen is weak. You should use a strong master password (or a passphrase) to properly protect your Bitwarden account. Are you sure you want to use this master password?"
+    "message": "The master password you have chosen is weak. You should use a strong master password (or a passphrase) to properly protect your account. Are you sure you want to use this master password?"
   },
   "errorOccurred": {
     "message": "An error has occurred."

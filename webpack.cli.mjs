@@ -54,7 +54,7 @@ const config = {
     outputModule: true,
   },
   entry: {
-    bwdc: "./src-cli/bwdc.ts",
+    "eduneon-dc": "./src-cli/eduneon-dc.ts",
   },
   optimization: {
     minimize: false,

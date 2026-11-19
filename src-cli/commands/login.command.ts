@@ -12,7 +12,7 @@ export class LoginCommand {
   constructor(private authService: AuthService) {}
 
   async run() {
-    this.canInteract = process.env.BW_NOINTERACTION !== "true";
+    this.canInteract = process.env.EDUNEON_DC_NOINTERACTION !== "true";
 
     const { clientId, clientSecret } = await this.apiIdentifiers();
 

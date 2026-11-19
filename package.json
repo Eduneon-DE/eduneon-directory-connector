@@ -1,29 +1,25 @@
 {
-  "name": "@bitwarden/directory-connector",
-  "productName": "Bitwarden Directory Connector",
-  "description": "Sync your user directory to your Bitwarden organization.",
+  "name": "@eduneon/directory-connector",
+  "productName": "Eduneon Directory Connector",
+  "description": "Sync users and groups from your directory to Eduneon.",
   "version": "2026.11.0",
   "keywords": [
-    "bitwarden",
-    "password",
-    "vault",
-    "password manager"
+    "eduneon",
+    "ldap",
+    "active directory",
+    "entra id",
+    "google workspace"
   ],
-  "author": "Bitwarden Inc. <hello@bitwarden.com> (https://bitwarden.com)",
-  "homepage": "https://bitwarden.com",
+  "author": "Eduneon (https://eduneon.de)",
+  "homepage": "https://github.com/Eduneon-DE/eduneon-directory-connector",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bitwarden/directory-connector"
+    "url": "https://github.com/Eduneon-DE/eduneon-directory-connector"
   },
   "type": "module",
   "license": "GPL-3.0",
   "main": "main.js",
   "scripts": {
-    "sub:init": "git submodule update --init --recursive",
-    "sub:update": "git submodule update --remote",
-    "sub:pull": "git submodule foreach git pull origin master",
-    "sub:commit": "npm run sub:pull && git commit -am \"update submodule\"",
-    "preinstall": "npm run sub:init",
     "symlink:mac": "npm run symlink:lin",
     "build:native": "cd native && npm install && npm run build",
     "build:native:release": "cd native && npm install && npm run build:release",

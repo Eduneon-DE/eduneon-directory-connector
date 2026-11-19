@@ -36,7 +36,7 @@ export class MenuMain extends BaseMenu {
       ];
 
       template.unshift({
-        label: this.main.i18nService.t("bitwardenDirectoryConnector"),
+        label: this.main.i18nService.t("appName"),
         submenu: firstMenuPart.concat(this.macAppMenuItemOptions),
       });
 

@@ -1,7 +1,7 @@
 {
   "name": "dc-native",
   "version": "1.0.0",
-  "description": "Native keychain bindings for Bitwarden Directory Connector",
+  "description": "Native keychain bindings for Eduneon Directory Connector",
   "main": "index.mjs",
   "type": "module",
   "types": "index.d.ts",

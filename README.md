@@ -1,102 +1,78 @@
-![Build](https://github.com/bitwarden/directory-connector/workflows/Build/badge.svg)
+# Eduneon Directory Connector
 
-# Bitwarden Directory Connector
-
-The Bitwarden Directory Connector is a desktop application used to sync your Bitwarden enterprise organization to an existing directory of users and groups.
+Syncs users and groups from your school's or organization's directory to [Eduneon](https://eduneon.de). It runs on your own machine or server, inside your network, so Eduneon never needs direct access to your directory: the connector reads the directory locally and sends the result to Eduneon over HTTPS.
 
 Supported directories:
 
-- Active Directory
-- Any other LDAP-based directory
+- Active Directory and any other LDAP directory
 - Microsoft Entra ID
-- G Suite (Google)
+- Google Workspace
 - Okta
+- OneLogin
 
-The application is written using Electron with Angular and installs on Windows, macOS, and Linux distributions.
+It comes as a desktop app (Windows, macOS, Linux) and as a command-line tool, `eduneon-dc`, for scheduled syncs on servers.
 
-[![Platforms](https://imgur.com/SLv9paA.png "Windows, macOS, and Linux")](https://bitwarden.com/help/directory-sync/#download-and-install)
+> **Status:** in development. The rebrand is done; sending data to Eduneon (instead of the upstream Bitwarden API) is the next milestone.
 
-## Command-line Interface
+## Install
 
-A command-line interface tool is also available for the Bitwarden Directory Connector. The Directory Connector CLI (`bwdc`) is written with TypeScript and Node.js and can also be run on Windows, macOS, and Linux distributions.
+Download the latest release from the [Releases page](https://github.com/Eduneon-DE/eduneon-directory-connector/releases):
 
-## CLI Documentation
+| Platform              | Desktop app                                                                 | CLI                                    |
+| --------------------- | --------------------------------------------------------------------------- | -------------------------------------- |
+| Windows               | `Eduneon-Directory-Connector-Setup-<version>.exe` (or the `Portable` build) | `eduneon-dc-windows-<version>.zip`     |
+| macOS (Apple Silicon) | `Eduneon-Directory-Connector-<version>-arm64.dmg`                           | `eduneon-dc-macos-arm64-<version>.zip` |
+| macOS (Intel)         | `Eduneon-Directory-Connector-<version>-x64.dmg`                             | not available                          |
+| Linux                 | `Eduneon-Directory-Connector-<version>-x86_64.AppImage`                     | `eduneon-dc-linux-<version>.zip`       |
 
-The Bitwarden Directory Connector CLI is self-documented with `--help` content and examples for every command. You should start exploring the CLI by using the global `--help` option:
+The desktop app updates itself from this repository's releases.
 
-```bash
-bwdc --help
-```
+## CLI
 
-This option will list all available commands that you can use with the Directory Connector CLI.
-
-Additionally, you can run the `--help` option on a specific command to learn more about it:
-
-```
-bwdc test --help
-bwdc config --help
-```
-
-**Detailed Documentation**
-
-We provide detailed documentation and examples for using the Directory Connector CLI in our help center at https://bitwarden.com/help/directory-sync-cli/.
-
-## Build/Run
-
-**Requirements**
-
-- [Node.js](https://nodejs.org) v20 (LTS)
-- Windows users: To compile the native node modules used in the app you will need the Visual C++ toolset, available through the standard Visual Studio installer (recommended) or by installing [`windows-build-tools`](https://github.com/felixrieseberg/windows-build-tools) through `npm`. See more at [Compiling native Addon modules](https://github.com/Microsoft/nodejs-guidelines/blob/master/windows-environment.md#compiling-native-addon-modules).
-
-**Run the app**
+The CLI documents itself:
 
 ```bash
-npm install
-npm run reset # Only necessary if you have previously run the CLI app
-npm run rebuild
-npm run electron
+eduneon-dc --help
+eduneon-dc config --help
 ```
 
-**Run the CLI**
+To sync on a schedule, run `eduneon-dc sync` from cron, a systemd timer or Windows Task Scheduler.
+
+Environment variables:
+
+| Variable                       | Purpose                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `EDUNEON_DC_APPDATA_DIR`       | Where settings are stored (default: the OS config folder)                                                    |
+| `EDUNEON_DC_PLAINTEXT_SECRETS` | `true` stores secrets in the settings file instead of the OS keychain (for headless Linux without a keyring) |
+| `EDUNEON_DC_NOINTERACTION`     | `true` never prompts for input                                                                               |
+| `EDUNEON_DC_DEBUG`             | `true` enables debug logging                                                                                 |
+
+## Build from source
+
+Requirements: Node.js (version in `.nvmrc`), npm, and a Rust toolchain for the native keychain module. On Linux also `libsecret-1-dev`, `libdbus-1-dev` and `pkg-config`. On Windows, the Visual C++ build tools.
+
+Desktop app:
 
 ```bash
-npm install
-npm run reset # Only necessary if you have previously run the desktop app
+npm ci
+npm run rebuild      # builds the native module
+npm run electron     # runs the app with live reload
+npm run dist:mac     # or dist:win / dist:lin to build an installer into ./dist
+```
+
+CLI:
+
+```bash
+npm ci
+npm run build:native:release
 npm run build:cli:watch
+node ./build-cli/eduneon-dc.js --help
 ```
 
-You can then run commands from the `./build-cli` folder:
+## Releasing
 
-```bash
-node ./build-cli/bwdc.js --help
-```
+Set `version` in `package.json`, then push a matching tag (`v2026.11.1`). The [Release workflow](.github/workflows/release.yml) builds every platform and publishes a GitHub release. Code signing turns on when the signing secrets listed in that workflow are configured.
 
-## We're Hiring!
+## License and origin
 
-Interested in contributing in a big way? Consider joining our team! We're hiring for many positions. Please take a look at our [Careers page](https://bitwarden.com/careers/) to see what opportunities are currently open as well as what it's like to work at Bitwarden.
-
-## Contribute
-
-Code contributions are welcome! Please commit any pull requests against the `master` branch. Learn more about how to contribute by reading the [`CONTRIBUTING.md`](CONTRIBUTING.md) file.
-
-Security audits and feedback are welcome. Please open an issue or email us privately if the report is sensitive in nature. You can read our security policy in the [`SECURITY.md`](SECURITY.md) file.
-
-### Prettier
-
-We recently migrated to using Prettier as code formatter. All previous branches will need to updated to avoid large merge conflicts using the following steps:
-
-1. Check out your local Branch
-2. Run `git merge 225073aa335d33ad905877b68336a9288e89ea10`
-3. Resolve any merge conflicts, commit.
-4. Run `npm run prettier`
-5. Commit
-6. Run `git merge -Xours 096196fcd512944d1c3d9c007647a1319b032639`
-7. Push
-
-#### Git blame
-
-We also recommend that you configure git to ignore the prettier revision using:
-
-```bash
-git config blame.ignoreRevsFile .git-blame-ignore-revs
-```
+This project is a fork of [Bitwarden Directory Connector](https://github.com/bitwarden/directory-connector), © Bitwarden Inc., and like the original it is licensed under the [GNU General Public License v3.0](LICENSE.txt). Eduneon is not affiliated with or endorsed by Bitwarden. "Bitwarden" is a trademark of Bitwarden Inc.

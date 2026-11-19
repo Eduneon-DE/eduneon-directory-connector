@@ -1,4 +1,4 @@
-export const APPLICATION_NAME = "Bitwarden Directory Connector";
+export const APPLICATION_NAME = "Eduneon Directory Connector";
 
 /**
  * Maximum UTF-8 byte length for a secret value stored via Windows Credential Manager.

@@ -7,14 +7,22 @@ export default async function notarizing(context) {
     return;
   }
 
+  const hasApiKey = !!process.env.APP_STORE_CONNECT_TEAM_ISSUER;
+  const hasAppleId =
+    !!(process.env.APPLE_ID_USERNAME || process.env.APPLEID) && !!process.env.APPLE_TEAM_ID;
+  if (!hasApiKey && !hasAppleId) {
+    console.log("[notarize] No Apple credentials set, skipping notarization (unsigned build).");
+    return;
+  }
+
   const appName = context.packager.appInfo.productFilename;
-  if (process.env.APP_STORE_CONNECT_TEAM_ISSUER) {
+  if (hasApiKey) {
     const appleApiIssuer = process.env.APP_STORE_CONNECT_TEAM_ISSUER;
     const appleApiKey = process.env.APP_STORE_CONNECT_AUTH_KEY_PATH;
     const appleApiKeyId = process.env.APP_STORE_CONNECT_AUTH_KEY;
     return await notarize({
       tool: "notarytool",
-      appBundleId: "com.bitwarden.directory-connector",
+      appBundleId: "de.eduneon.directory-connector",
       appPath: `${appOutDir}/${appName}.app`,
       appleApiIssuer: appleApiIssuer,
       appleApiKey: appleApiKey,
@@ -25,9 +33,9 @@ export default async function notarizing(context) {
     const appleIdPassword = process.env.APPLE_ID_PASSWORD || `@keychain:AC_PASSWORD`;
     return await notarize({
       tool: "notarytool",
-      appBundleId: "com.bitwarden.directory-connector",
+      appBundleId: "de.eduneon.directory-connector",
       appPath: `${appOutDir}/${appName}.app`,
-      teamId: "LTZ2PFU5D6",
+      teamId: process.env.APPLE_TEAM_ID,
       appleId: appleId,
       appleIdPassword: appleIdPassword,
     });

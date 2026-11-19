@@ -1,8 +1,8 @@
-# Bitwarden Directory Connector
+# Eduneon Directory Connector
 
 ## Project Overview
 
-Directory Connector is a TypeScript application that synchronizes users and groups from directory services to Bitwarden organizations. It provides both a desktop GUI (built with Angular and Electron) and a CLI tool (bwdc).
+Directory Connector is a TypeScript application that synchronizes users and groups from directory services to Eduneon (fork of Bitwarden Directory Connector). It provides both a desktop GUI (built with Angular and Electron) and a CLI tool (eduneon-dc).
 
 **Supported Directory Services:**
 
@@ -193,11 +193,3 @@ Each directory service has unique authentication and query patterns:
 - **Microsoft Entra ID**: Microsoft Graph API, OAuth tokens
 - **Google Workspace**: Google Admin SDK, service account credentials
 - **Okta/OneLogin**: REST APIs with API tokens
-
-## References
-
-- [Architectural Decision Records (ADRs)](https://contributing.bitwarden.com/architecture/adr/)
-- [Contributing Guidelines](https://contributing.bitwarden.com/contributing/)
-- [Code Style](https://contributing.bitwarden.com/contributing/code-style/)
-- [Security Whitepaper](https://bitwarden.com/help/bitwarden-security-white-paper/)
-- [Security Definitions](https://contributing.bitwarden.com/architecture/security/definitions)

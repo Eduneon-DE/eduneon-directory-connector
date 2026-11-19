@@ -10,7 +10,6 @@ import { UpdateCommand } from "@/src-cli/commands/update.command";
 import { Response } from "@/src-cli/models/response";
 import { StringResponse } from "@/src-cli/models/response/stringResponse";
 
-import { Main } from "./bwdc";
 import { ClearCacheCommand } from "./commands/clearCache.command";
 import { ConfigCommand } from "./commands/config.command";
 import { LastSyncCommand } from "./commands/lastSync.command";
@@ -18,6 +17,7 @@ import { LoginCommand } from "./commands/login.command";
 import { LogoutCommand } from "./commands/logout.command";
 import { SyncCommand } from "./commands/sync.command";
 import { TestCommand } from "./commands/test.command";
+import { Main } from "./eduneon-dc";
 
 const writeLn = (s: string, finalLine = false, error = false) => {
   const stream = error ? process.stderr : process.stdout;
@@ -64,7 +64,7 @@ export class Program extends BaseProgram {
     });
 
     program.on("option:nointeraction", () => {
-      process.env.BW_NOINTERACTION = "true";
+      process.env.EDUNEON_DC_NOINTERACTION = "true";
     });
 
     program.on("command:*", () => {
@@ -76,12 +76,12 @@ export class Program extends BaseProgram {
     program.on("--help", () => {
       writeLn("\n  Examples:");
       writeLn("");
-      writeLn("    bwdc login");
-      writeLn("    bwdc test");
-      writeLn("    bwdc sync");
-      writeLn("    bwdc last-sync");
-      writeLn("    bwdc config server https://bw.company.com");
-      writeLn("    bwdc update");
+      writeLn("    eduneon-dc login");
+      writeLn("    eduneon-dc test");
+      writeLn("    eduneon-dc sync");
+      writeLn("    eduneon-dc last-sync");
+      writeLn("    eduneon-dc config server https://cockpit.example.com");
+      writeLn("    eduneon-dc update");
       writeLn("", true);
     });
 
@@ -112,7 +112,7 @@ export class Program extends BaseProgram {
       .on("--help", () => {
         writeLn("\n  Examples:");
         writeLn("");
-        writeLn("    bwdc logout");
+        writeLn("    eduneon-dc logout");
         writeLn("", true);
       })
       .action(async () => {
@@ -132,8 +132,8 @@ export class Program extends BaseProgram {
       .on("--help", () => {
         writeLn("\n  Examples:");
         writeLn("");
-        writeLn("    bwdc test");
-        writeLn("    bwdc test --last");
+        writeLn("    eduneon-dc test");
+        writeLn("    eduneon-dc test --last");
         writeLn("", true);
       })
       .action(async (options: OptionValues) => {
@@ -149,7 +149,7 @@ export class Program extends BaseProgram {
       .on("--help", () => {
         writeLn("\n  Examples:");
         writeLn("");
-        writeLn("    bwdc sync");
+        writeLn("    eduneon-dc sync");
         writeLn("", true);
       })
       .action(async () => {
@@ -169,8 +169,8 @@ export class Program extends BaseProgram {
         writeLn("");
         writeLn("  Examples:");
         writeLn("");
-        writeLn("    bwdc last-sync groups");
-        writeLn("    bwdc last-sync users");
+        writeLn("    eduneon-dc last-sync groups");
+        writeLn("    eduneon-dc last-sync users");
         writeLn("", true);
       })
       .action(async (object: string) => {
@@ -201,16 +201,15 @@ export class Program extends BaseProgram {
         writeLn("");
         writeLn("  Examples:");
         writeLn("");
-        writeLn("    bwdc config server https://bw.company.com");
-        writeLn("    bwdc config server bitwarden.com");
-        writeLn("    bwdc config directory 1");
-        writeLn("    bwdc config ldap.password <password>");
-        writeLn("    bwdc config ldap.password --secretenv LDAP_PWD");
-        writeLn("    bwdc config entra.key <key>");
-        writeLn("    bwdc config gsuite.key <key>");
-        writeLn("    bwdc config okta.token <token>");
-        writeLn("    bwdc config onelogin.secret <secret>");
-        writeLn("    bwdc config sync.inviteUsersAfterProvisioning false");
+        writeLn("    eduneon-dc config server https://cockpit.example.com");
+        writeLn("    eduneon-dc config directory 1");
+        writeLn("    eduneon-dc config ldap.password <password>");
+        writeLn("    eduneon-dc config ldap.password --secretenv LDAP_PWD");
+        writeLn("    eduneon-dc config entra.key <key>");
+        writeLn("    eduneon-dc config gsuite.key <key>");
+        writeLn("    eduneon-dc config okta.token <token>");
+        writeLn("    eduneon-dc config onelogin.secret <secret>");
+        writeLn("    eduneon-dc config sync.inviteUsersAfterProvisioning false");
         writeLn("", true);
       })
       .action(async (setting: string, value: string, options: OptionValues) => {
@@ -229,7 +228,7 @@ export class Program extends BaseProgram {
       .on("--help", () => {
         writeLn("\n  Examples:");
         writeLn("");
-        writeLn("    bwdc data-file");
+        writeLn("    eduneon-dc data-file");
         writeLn("", true);
       })
       .action(() => {
@@ -244,7 +243,7 @@ export class Program extends BaseProgram {
       .on("--help", () => {
         writeLn("\n  Examples:");
         writeLn("");
-        writeLn("    bwdc clear-cache");
+        writeLn("    eduneon-dc clear-cache");
         writeLn("", true);
       })
       .action(async (options: OptionValues) => {
@@ -265,16 +264,16 @@ export class Program extends BaseProgram {
         writeLn("");
         writeLn("  Examples:");
         writeLn("");
-        writeLn("    bwdc update");
-        writeLn("    bwdc update --raw");
+        writeLn("    eduneon-dc update");
+        writeLn("    eduneon-dc update --raw");
         writeLn("", true);
       })
       .action(async () => {
         const command = new UpdateCommand(
           this.main.platformUtilsService,
           this.main.i18nService,
-          "directory-connector",
-          "bwdc",
+          "eduneon-directory-connector",
+          "eduneon-dc",
           false,
         );
         const response = await command.run();

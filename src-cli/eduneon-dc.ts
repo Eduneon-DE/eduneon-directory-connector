@@ -61,12 +61,10 @@ export class Main {
 
   constructor() {
     const applicationName = APPLICATION_NAME;
-    if (process.env.BITWARDENCLI_CONNECTOR_APPDATA_DIR) {
-      this.dataFilePath = path.resolve(process.env.BITWARDENCLI_CONNECTOR_APPDATA_DIR);
-    } else if (process.env.BITWARDEN_CONNECTOR_APPDATA_DIR) {
-      this.dataFilePath = path.resolve(process.env.BITWARDEN_CONNECTOR_APPDATA_DIR);
-    } else if (fs.existsSync(path.join(__dirname, "bitwarden-connector-appdata"))) {
-      this.dataFilePath = path.join(__dirname, "bitwarden-connector-appdata");
+    if (process.env.EDUNEON_DC_APPDATA_DIR) {
+      this.dataFilePath = path.resolve(process.env.EDUNEON_DC_APPDATA_DIR);
+    } else if (fs.existsSync(path.join(__dirname, "eduneon-connector-appdata"))) {
+      this.dataFilePath = path.join(__dirname, "eduneon-connector-appdata");
     } else if (process.platform === "darwin") {
       this.dataFilePath = path.join(
         process.env.HOME,
@@ -80,7 +78,7 @@ export class Main {
       this.dataFilePath = path.join(process.env.HOME, ".config/" + applicationName);
     }
 
-    const plaintextSecrets = process.env.BITWARDENCLI_CONNECTOR_PLAINTEXT_SECRETS === "true";
+    const plaintextSecrets = process.env.EDUNEON_DC_PLAINTEXT_SECRETS === "true";
     this.i18nService = new I18nService("en", "./locales");
     this.platformUtilsService = new CliPlatformUtilsService(
       ClientType.DirectoryConnector,
@@ -88,7 +86,7 @@ export class Main {
     );
     this.logService = new ConsoleLogService(
       this.platformUtilsService.isDev(),
-      (level) => process.env.BITWARDENCLI_CONNECTOR_DEBUG !== "true" && level <= LogLevelType.Info,
+      (level) => process.env.EDUNEON_DC_DEBUG !== "true" && level <= LogLevelType.Info,
     );
     this.cryptoFunctionService = new NodeCryptoFunctionService();
     this.storageService = new LowdbStorageService(
@@ -114,7 +112,7 @@ export class Main {
       this.secureStorageService,
       this.logService,
       this.stateMigrationService,
-      process.env.BITWARDENCLI_CONNECTOR_PLAINTEXT_SECRETS !== "true",
+      process.env.EDUNEON_DC_PLAINTEXT_SECRETS !== "true",
     );
 
     this.appIdService = new AppIdService(this.storageService);
@@ -123,7 +121,7 @@ export class Main {
     this.environmentService = new EnvironmentServiceImplementation(this.stateService);
 
     const customUserAgent =
-      "Bitwarden_DC/" +
+      "Eduneon_DC/" +
       this.platformUtilsService.getApplicationVersion() +
       " (" +
       this.platformUtilsService.getDeviceString().toUpperCase() +

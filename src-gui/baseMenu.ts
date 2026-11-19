@@ -106,7 +106,7 @@ export class BaseMenu {
         },
         { type: "separator" },
         {
-          label: this.i18nService.t("hideBitwarden"),
+          label: this.i18nService.t("hideApp"),
           role: "hide",
         },
         {
@@ -119,7 +119,7 @@ export class BaseMenu {
         },
         { type: "separator" },
         {
-          label: this.i18nService.t("quitBitwarden"),
+          label: this.i18nService.t("quitApp"),
           role: "quit",
         },
       ];
