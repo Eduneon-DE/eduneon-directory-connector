@@ -1,3 +1,5 @@
+import * as fs from "fs";
+
 import * as program from "commander";
 
 import { EnvironmentService, EnvironmentUrls } from "@/libs/abstractions/environment.service";
@@ -15,6 +17,124 @@ import { NodeUtils } from "@/libs/utils/nodeUtils";
 
 import { Response } from "@/src-cli/models/response";
 import { MessageResponse } from "@/src-cli/models/response/messageResponse";
+import { StringResponse } from "@/src-cli/models/response/stringResponse";
+
+type Section = "ldap" | "entra" | "gsuite" | "okta" | "onelogin" | "sync";
+type Kind = "text" | "number" | "boolean" | "secret";
+
+/** One setting `eduneon-dc config <section>.<name> <value>` can change. */
+export type Setting = { section: Section; field: string; kind: Kind; help: string };
+
+const s = (section: Section, field: string, kind: Kind, help: string): Setting => ({
+  section,
+  field,
+  kind,
+  help,
+});
+
+/**
+ * Everything a directory needs to be read, settable from a terminal: a server has no desktop app to
+ * configure it with. Keys are matched case-insensitively; aliases point at the same field.
+ */
+export const SETTINGS: Record<string, Setting> = {
+  "ldap.hostname": s("ldap", "hostname", "text", "Directory server host name or IP"),
+  "ldap.port": s("ldap", "port", "number", "Port: 389 (LDAP, StartTLS) or 636 (LDAPS)"),
+  "ldap.ssl": s("ldap", "ssl", "boolean", "Use LDAPS (TLS from the start)"),
+  "ldap.starttls": s("ldap", "startTls", "boolean", "Upgrade a plain connection with StartTLS"),
+  "ldap.tlscapath": s("ldap", "tlsCaPath", "text", "CA certificate file for StartTLS"),
+  "ldap.sslcapath": s("ldap", "sslCaPath", "text", "CA certificate file for LDAPS"),
+  "ldap.sslcertpath": s("ldap", "sslCertPath", "text", "Client certificate file (LDAPS)"),
+  "ldap.sslkeypath": s("ldap", "sslKeyPath", "text", "Client key file (LDAPS)"),
+  "ldap.sslallowunauthorized": s(
+    "ldap",
+    "sslAllowUnauthorized",
+    "boolean",
+    "Accept a certificate that cannot be verified (testing only)",
+  ),
+  "ldap.rootpath": s("ldap", "rootPath", "text", "Base DN to read, e.g. dc=school,dc=local"),
+  "ldap.basedn": s("ldap", "rootPath", "text", "Same as ldap.rootPath"),
+  "ldap.username": s("ldap", "username", "text", "Bind DN or user name"),
+  "ldap.password": s("ldap", "password", "secret", "Bind password"),
+  "ldap.ad": s("ldap", "ad", "boolean", "The server is Active Directory"),
+  "ldap.pagedsearch": s(
+    "ldap",
+    "pagedSearch",
+    "boolean",
+    "Read in pages (AD returns at most 1000 otherwise)",
+  ),
+  "ldap.currentuser": s(
+    "ldap",
+    "currentUser",
+    "boolean",
+    "Bind as the Windows user running the connector",
+  ),
+  "ldap.domain": s("ldap", "domain", "text", "Domain of that Windows user"),
+  "entra.tenant": s("entra", "tenant", "text", "Tenant ID or domain"),
+  "entra.applicationid": s("entra", "applicationId", "text", "Application (client) ID"),
+  "entra.key": s("entra", "key", "secret", "Client secret"),
+  "azure.key": s("entra", "key", "secret", "Same as entra.key"),
+  "entra.identityauthority": s(
+    "entra",
+    "identityAuthority",
+    "text",
+    "Login host, default login.microsoftonline.com",
+  ),
+  "gsuite.domain": s("gsuite", "domain", "text", "Google Workspace domain"),
+  "gsuite.adminuser": s("gsuite", "adminUser", "text", "Admin user the service account acts as"),
+  "gsuite.clientemail": s("gsuite", "clientEmail", "text", "Service account e-mail"),
+  "gsuite.customer": s("gsuite", "customer", "text", "Customer ID (optional)"),
+  "gsuite.key": s("gsuite", "privateKey", "secret", "Service account private key (PEM)"),
+  "okta.orgurl": s("okta", "orgUrl", "text", "Okta organization URL"),
+  "okta.token": s("okta", "token", "secret", "Okta API token"),
+  "onelogin.clientid": s("onelogin", "clientId", "text", "OneLogin client ID"),
+  "onelogin.secret": s("onelogin", "clientSecret", "secret", "OneLogin client secret"),
+  "sync.users": s("sync", "users", "boolean", "Read users (Entra ID, Google, Okta, OneLogin)"),
+  "sync.groups": s("sync", "groups", "boolean", "Read groups (Entra ID, Google, Okta, OneLogin)"),
+  "sync.userfilter": s(
+    "sync",
+    "userFilter",
+    "text",
+    "Which users to read (directory-specific filter)",
+  ),
+  "sync.groupfilter": s(
+    "sync",
+    "groupFilter",
+    "text",
+    "Which groups to read (directory-specific filter)",
+  ),
+  "sync.interval": s("sync", "interval", "number", "Minutes between syncs in the desktop app"),
+  "sync.inviteusersafterprovisioning": s(
+    "sync",
+    "inviteUsersAfterProvisioning",
+    "boolean",
+    "Send invitation emails to synced users",
+  ),
+};
+
+/** Directory names `config directory` accepts, besides the numbers. */
+const DIRECTORY_NAMES: Record<string, DirectoryType> = {
+  ldap: DirectoryType.Ldap,
+  ad: DirectoryType.Ldap,
+  activedirectory: DirectoryType.Ldap,
+  entra: DirectoryType.EntraID,
+  entraid: DirectoryType.EntraID,
+  azure: DirectoryType.EntraID,
+  gsuite: DirectoryType.GSuite,
+  google: DirectoryType.GSuite,
+  googleworkspace: DirectoryType.GSuite,
+  okta: DirectoryType.Okta,
+  onelogin: DirectoryType.OneLogin,
+};
+
+const SECTION_OF_DIRECTORY: Record<DirectoryType, Section> = {
+  [DirectoryType.Ldap]: "ldap",
+  [DirectoryType.EntraID]: "entra",
+  [DirectoryType.GSuite]: "gsuite",
+  [DirectoryType.Okta]: "okta",
+  [DirectoryType.OneLogin]: "onelogin",
+};
+
+const SECTIONS: Section[] = ["ldap", "entra", "gsuite", "okta", "onelogin", "sync"];
 
 export class ConfigCommand {
   private directory: DirectoryType;
@@ -32,51 +152,113 @@ export class ConfigCommand {
   ) {}
 
   async run(setting: string, value: string, options: program.OptionValues): Promise<Response> {
-    setting = setting.toLowerCase();
-    if (value == null || value === "") {
-      if (options.secretfile) {
-        value = await NodeUtils.readFirstLine(options.secretfile);
-      } else if (options.secretenv && process.env[options.secretenv]) {
-        value = process.env[options.secretenv];
-      }
-    }
+    const key = setting.toLowerCase();
     try {
-      switch (setting) {
+      switch (key) {
+        case "show":
+          return await this.show();
+        case "export":
+          return await this.export(value);
+        case "import":
+          await this.import(value);
+          return this.saved(`settings from ${value}`);
         case "server":
           await this.setServer(value);
-          break;
+          return this.saved(setting);
         case "directory":
           await this.setDirectory(value);
-          break;
-        case "ldap.password":
-          await this.setLdapPassword(value);
-          break;
-        case "gsuite.key":
-          await this.setGSuiteKey(value);
-          break;
-        // Azure Active Directory was renamed to Entra ID, but we've kept the old key name
-        // to be backwards compatible with existing configurations.
-        case "azure.key":
-        case "entra.key":
-          await this.setEntraIdKey(value);
-          break;
-        case "okta.token":
-          await this.setOktaToken(value);
-          break;
-        case "onelogin.secret":
-          await this.setOneLoginSecret(value);
-          break;
-        case "sync.inviteusersafterprovisioning":
-          await this.setInviteUsersAfterProvisioning(value);
-          break;
-        default:
-          return Response.badRequest("Unknown setting.");
+          return this.saved(setting);
+        case "gsuite.keyfile":
+          await this.setGSuiteKeyFile(value || options.secretfile);
+          return this.saved(setting);
       }
+
+      const definition = SETTINGS[key];
+      if (definition == null) {
+        return Response.badRequest(
+          `Unknown setting "${setting}". Run "eduneon-dc config --help" to see all settings.`,
+        );
+      }
+      const raw = await this.readValue(value, options, definition);
+      await this.loadConfig();
+      this.config(definition.section)[definition.field] = this.parse(raw, definition, setting);
+      await this.saveConfig();
+      return this.saved(setting);
     } catch (e) {
       return Response.error(e);
     }
-    const res = new MessageResponse(this.i18nService.t("savedSetting", setting), null);
-    return Response.success(res);
+  }
+
+  private saved(what: string) {
+    return Response.success(new MessageResponse(this.i18nService.t("savedSetting", what), null));
+  }
+
+  /**
+   * The value itself, or for a secret from --secretenv / --secretfile, so it never has to be typed on a
+   * command line (where it would land in the shell history and the process list).
+   */
+  private async readValue(value: string, options: program.OptionValues, definition: Setting) {
+    if (value != null && value !== "") {
+      return value;
+    }
+    if (options.secretenv) {
+      const fromEnv = process.env[options.secretenv];
+      if (fromEnv == null || fromEnv === "") {
+        throw new Error(`The environment variable ${options.secretenv} is not set.`);
+      }
+      return fromEnv;
+    }
+    if (options.secretfile) {
+      // A PEM key spans several lines; every other secret is the file's first line.
+      return definition.field === "privateKey"
+        ? fs.readFileSync(options.secretfile, "utf8")
+        : await NodeUtils.readFirstLine(options.secretfile);
+    }
+    if (definition.kind === "secret") {
+      throw new Error("Give the value, or --secretenv <variable> or --secretfile <file>.");
+    }
+    return null;
+  }
+
+  private parse(raw: string, definition: Setting, name: string): unknown {
+    if (raw == null || raw === "" || raw.toLowerCase() === "null") {
+      return null;
+    }
+    switch (definition.kind) {
+      case "number": {
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n < 0) {
+          throw new Error(`${name} must be a whole number.`);
+        }
+        return n;
+      }
+      case "boolean": {
+        const v = raw.toLowerCase();
+        if (["true", "yes", "1", "on"].includes(v)) {
+          return true;
+        }
+        if (["false", "no", "0", "off"].includes(v)) {
+          return false;
+        }
+        throw new Error(`${name} must be true or false.`);
+      }
+      case "secret":
+        return definition.field === "privateKey" ? raw.trimStart() : raw;
+      default:
+        return raw.trim();
+    }
+  }
+
+  private config(section: Section): Record<string, unknown> {
+    const configs: Record<Section, object> = {
+      ldap: this.ldap,
+      entra: this.entra,
+      gsuite: this.gsuite,
+      okta: this.okta,
+      onelogin: this.oneLogin,
+      sync: this.sync,
+    };
+    return configs[section] as Record<string, unknown>;
   }
 
   private async setServer(url: string) {
@@ -87,52 +269,114 @@ export class ConfigCommand {
   }
 
   private async setDirectory(type: string) {
-    const dir = parseInt(type, null);
-    if (dir < DirectoryType.Ldap || dir > DirectoryType.OneLogin) {
-      throw new Error("Invalid directory type value.");
+    const name = (type ?? "").toLowerCase().replace(/[\s_-]/g, "");
+    const dir = name in DIRECTORY_NAMES ? DIRECTORY_NAMES[name] : parseInt(type, 10);
+    if (!Number.isInteger(dir) || dir < DirectoryType.Ldap || dir > DirectoryType.OneLogin) {
+      throw new Error("Directory must be one of: ldap, entra, gsuite, okta, onelogin (or 0-4).");
     }
     await this.loadConfig();
     this.directory = dir;
     await this.saveConfig();
   }
 
-  private async setLdapPassword(password: string) {
-    await this.loadConfig();
-    this.ldap.password = password;
-    await this.saveConfig();
-  }
-
-  private async setGSuiteKey(key: string) {
-    await this.loadConfig();
-    this.gsuite.privateKey = key != null ? key.trimLeft() : null;
-    await this.saveConfig();
-  }
-
-  private async setEntraIdKey(key: string) {
-    await this.loadConfig();
-    this.entra.key = key;
-    await this.saveConfig();
-  }
-
-  private async setOktaToken(token: string) {
-    await this.loadConfig();
-    this.okta.token = token;
-    await this.saveConfig();
-  }
-
-  private async setOneLoginSecret(secret: string) {
-    await this.loadConfig();
-    this.oneLogin.clientSecret = secret;
-    await this.saveConfig();
-  }
-
-  private async setInviteUsersAfterProvisioning(value: string) {
-    const normalized = value?.toLowerCase();
-    if (normalized !== "true" && normalized !== "false") {
-      throw new Error("Value must be 'true' or 'false'.");
+  /** A Google service account's JSON key file: its e-mail and private key in one step. */
+  private async setGSuiteKeyFile(path: string) {
+    if (!path) {
+      throw new Error("Give the path of the service account's JSON key file.");
+    }
+    const key = JSON.parse(fs.readFileSync(path, "utf8"));
+    if (!key.client_email || !key.private_key) {
+      throw new Error(`${path} is not a service account key (no client_email / private_key).`);
     }
     await this.loadConfig();
-    this.sync.inviteUsersAfterProvisioning = normalized === "true";
+    this.gsuite.clientEmail = key.client_email;
+    this.gsuite.privateKey = key.private_key;
+    await this.saveConfig();
+  }
+
+  /** The current settings of the chosen directory, secrets shown only as set or not set. */
+  private async show() {
+    await this.loadConfig();
+    const section = this.directory != null ? SECTION_OF_DIRECTORY[this.directory] : null;
+    const lines = [
+      `server: ${this.environmentService.getWebVaultUrl()}`,
+      `directory: ${section ?? "(not set)"}`,
+    ];
+    const shown = new Set<string>();
+    for (const [name, definition] of Object.entries(SETTINGS)) {
+      const id = `${definition.section}.${definition.field}`;
+      if ((definition.section !== section && definition.section !== "sync") || shown.has(id)) {
+        continue;
+      }
+      shown.add(id);
+      const value = this.config(definition.section)[definition.field];
+      let text = value == null || value === "" ? "-" : String(value);
+      if (definition.kind === "secret") {
+        text = value ? "(set)" : "(not set)";
+      }
+      lines.push(`${name}: ${text}`);
+    }
+    return Response.success(new StringResponse(lines.join("\n")));
+  }
+
+  /** Every non-secret setting as JSON, to set up another server with `config import`. */
+  private async export(path: string) {
+    await this.loadConfig();
+    const withoutSecrets = (section: Section) => {
+      const copy: Record<string, unknown> = { ...this.config(section) };
+      delete copy.id;
+      for (const definition of Object.values(SETTINGS)) {
+        if (definition.section === section && definition.kind === "secret") {
+          delete copy[definition.field];
+        }
+      }
+      return copy;
+    };
+    const data: Record<string, unknown> = {
+      server: this.environmentService.getWebVaultUrl(),
+      directory: this.directory != null ? SECTION_OF_DIRECTORY[this.directory] : null,
+    };
+    for (const section of SECTIONS) {
+      data[section] = withoutSecrets(section);
+    }
+    const json = JSON.stringify(data, null, 2);
+    if (path) {
+      fs.writeFileSync(path, json + "\n", { mode: 0o600 });
+      return this.saved(`settings to ${path}`);
+    }
+    return Response.success(new StringResponse(json));
+  }
+
+  /** Settings from a file written by `config export`. Secrets are set separately. */
+  private async import(path: string) {
+    if (!path) {
+      throw new Error("Give the path of a file written by `eduneon-dc config export`.");
+    }
+    const data = JSON.parse(fs.readFileSync(path, "utf8"));
+    if (data.server) {
+      await this.setServer(data.server);
+    }
+    await this.loadConfig();
+    if (data.directory != null) {
+      const name = String(data.directory).toLowerCase();
+      this.directory = name in DIRECTORY_NAMES ? DIRECTORY_NAMES[name] : Number(data.directory);
+    }
+    for (const section of SECTIONS) {
+      const values = data[section];
+      if (values == null) {
+        continue;
+      }
+      const target = this.config(section);
+      for (const definition of Object.values(SETTINGS)) {
+        if (
+          definition.section === section &&
+          definition.kind !== "secret" &&
+          definition.field in values
+        ) {
+          target[definition.field] = values[definition.field];
+        }
+      }
+    }
     await this.saveConfig();
   }
 

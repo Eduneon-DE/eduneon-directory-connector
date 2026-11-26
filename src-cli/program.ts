@@ -9,7 +9,7 @@ import { Response } from "@/src-cli/models/response";
 import { StringResponse } from "@/src-cli/models/response/stringResponse";
 
 import { ClearCacheCommand } from "./commands/clearCache.command";
-import { ConfigCommand } from "./commands/config.command";
+import { ConfigCommand, SETTINGS } from "./commands/config.command";
 import { LastSyncCommand } from "./commands/lastSync.command";
 import { LoginCommand } from "./commands/login.command";
 import { LogoutCommand } from "./commands/logout.command";
@@ -116,17 +116,18 @@ export class Program extends BaseProgram {
 
     program
       .command("test")
-      .description("Test a simulated sync.")
-      .option("-l, --last", "Since the last successful sync.")
+      .description(
+        "Read the directory as a sync would and show what it would upload. Sends nothing.",
+      )
       .on("--help", () => {
-        writeLn("\n  Examples:");
+        writeLn("\n  Needs no login: use it to check the directory settings first.");
+        writeLn("");
+        writeLn("  Examples:");
         writeLn("");
         writeLn("    eduneon-dc test");
-        writeLn("    eduneon-dc test --last");
         writeLn("", true);
       })
       .action(async (options: OptionValues) => {
-        await this.exitIfNotAuthed();
         const command = new TestCommand(this.main.syncService, this.main.i18nService);
         const response = await command.run(options);
         this.processResponse(response);
@@ -175,30 +176,41 @@ export class Program extends BaseProgram {
       .option("--secretenv <variable-name>", "Read secret from the named environment variable.")
       .option("--secretfile <filename>", "Read secret from first line of the named file.")
       .on("--help", () => {
+        writeLn("\n  Commands:");
+        writeLn("");
+        writeLn("    show                  Show the settings (secrets only as set / not set).");
+        writeLn("    export [file]         Write all settings except secrets as JSON.");
+        writeLn(
+          "    import <file>         Read settings written by export (secrets are set separately).",
+        );
+        writeLn("    server <url>          The Cockpit address, e.g. https://app.eduneon.com.");
+        writeLn("    directory <type>      ldap, entra, gsuite, okta or onelogin.");
+        writeLn(
+          "    gsuite.keyfile <file> A Google service account's JSON key (e-mail and private key).",
+        );
         writeLn("\n  Settings:");
         writeLn("");
-        writeLn("    server - On-premise hosted installation URL.");
-        writeLn("    directory - The type of directory to use.");
-        writeLn("    ldap.password - The password for connection to this LDAP server.");
-        writeLn("    entra.key - The Entra Id secret key.");
-        writeLn("    gsuite.key - The G Suite private key.");
-        writeLn("    okta.token - The Okta token.");
-        writeLn("    onelogin.secret - The OneLogin client secret.");
+        for (const [name, definition] of Object.entries(SETTINGS)) {
+          const secret = definition.kind === "secret" ? " (secret)" : "";
+          writeLn(`    ${name.padEnd(36)}${definition.help}${secret}`);
+        }
+        writeLn("");
         writeLn(
-          "    sync.inviteUsersAfterProvisioning - Send invitation emails to synced users (true/false).",
+          "  A secret can come from --secretenv <variable> or --secretfile <file> instead of the",
         );
+        writeLn("  command line, so it does not end up in the shell history.");
         writeLn("");
         writeLn("  Examples:");
         writeLn("");
-        writeLn("    eduneon-dc config server https://cockpit.example.com");
-        writeLn("    eduneon-dc config directory 1");
-        writeLn("    eduneon-dc config ldap.password <password>");
-        writeLn("    eduneon-dc config ldap.password --secretenv LDAP_PWD");
-        writeLn("    eduneon-dc config entra.key <key>");
-        writeLn("    eduneon-dc config gsuite.key <key>");
-        writeLn("    eduneon-dc config okta.token <token>");
-        writeLn("    eduneon-dc config onelogin.secret <secret>");
-        writeLn("    eduneon-dc config sync.inviteUsersAfterProvisioning false");
+        writeLn("    eduneon-dc config server https://app.eduneon.com");
+        writeLn("    eduneon-dc config directory ldap");
+        writeLn("    eduneon-dc config ldap.hostname dc01.school.local");
+        writeLn("    eduneon-dc config ldap.port 636");
+        writeLn("    eduneon-dc config ldap.ssl true");
+        writeLn('    eduneon-dc config ldap.rootPath "dc=school,dc=local"');
+        writeLn('    eduneon-dc config ldap.username "cn=sync,cn=users,dc=school,dc=local"');
+        writeLn("    eduneon-dc config ldap.password --secretenv LDAP_PASSWORD");
+        writeLn("    eduneon-dc config show");
         writeLn("", true);
       })
       .action(async (setting: string, value: string, options: OptionValues) => {
