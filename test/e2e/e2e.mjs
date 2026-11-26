@@ -24,7 +24,14 @@ const BASE = "dc=school,dc=test";
 
 // --- test directory: 1 school, 2 groups, 5 people (one with a password hash that must never leave) ---
 const entries = [
-  { dn: BASE, attributes: { objectclass: ["top", "dcObject", "organization"], dc: "school", o: "Test School" } },
+  {
+    dn: BASE,
+    attributes: {
+      objectclass: ["top", "dcObject", "organization"],
+      dc: "school",
+      o: "Test School",
+    },
+  },
   { dn: `ou=people,${BASE}`, attributes: { objectclass: ["organizationalUnit"], ou: "people" } },
   ...["anna", "ben", "clara", "david", "emma"].map((uid, i) => ({
     dn: `uid=${uid},ou=people,${BASE}`,
@@ -40,7 +47,11 @@ const entries = [
   })),
   ...["teachers", "class-5a"].map((cn) => ({
     dn: `cn=${cn},${BASE}`,
-    attributes: { objectclass: ["top", "groupOfNames"], cn, member: [`uid=anna,ou=people,${BASE}`] },
+    attributes: {
+      objectclass: ["top", "groupOfNames"],
+      cn,
+      member: [`uid=anna,ou=people,${BASE}`],
+    },
   })),
 ];
 
@@ -85,7 +96,13 @@ const cockpit = http.createServer((req, res) => {
   }
   const provider = { id: 7, name: "E2E directory" };
   if (req.method === "GET" && req.url.startsWith("/api/v1/directory-connector/status")) {
-    return reply(200, { provider, syncStatus: "ok", lastSyncAt: null, setupComplete: true, lastUpload: null });
+    return reply(200, {
+      provider,
+      syncStatus: "ok",
+      lastSyncAt: null,
+      setupComplete: true,
+      lastUpload: null,
+    });
   }
   if (req.method === "POST" && req.url.startsWith("/api/v1/directory-connector/sync")) {
     let body = "";
@@ -102,7 +119,18 @@ const cockpit = http.createServer((req, res) => {
         dryRun: false,
         received: received.entries.length,
         mappings: done
-          ? [{ targetModel: "AuthenticationAccount", total: 5, created: 5, updated: 0, skipped: 0, errors: 0, conflicts: 0, deprovisioned: 0 }]
+          ? [
+              {
+                targetModel: "AuthenticationAccount",
+                total: 5,
+                created: 5,
+                updated: 0,
+                skipped: 0,
+                errors: 0,
+                conflicts: 0,
+                deprovisioned: 0,
+              },
+            ]
           : [],
         issues: [],
       });
@@ -145,7 +173,10 @@ const dc = (...args) =>
 await new Promise((resolve) => directory.listen(LDAP_PORT, "127.0.0.1", resolve));
 await new Promise((resolve) => cockpit.listen(COCKPIT_PORT, "127.0.0.1", resolve));
 try {
-  check(/\d{4}\.\d+\.\d+/.test((await dc("--version")).out), "the CLI starts and reports its version");
+  check(
+    /\d{4}\.\d+\.\d+/.test((await dc("--version")).out),
+    "the CLI starts and reports its version",
+  );
   for (const [key, value] of [
     ["server", `http://127.0.0.1:${COCKPIT_PORT}`],
     ["directory", "ldap"],
@@ -159,12 +190,21 @@ try {
   ]) {
     check((await dc("config", key, value)).code === 0, `config ${key}`);
   }
-  check((await dc("config", "ldap.password", "--secretenv", "LDAP_PASSWORD")).code === 0, "config ldap.password from an environment variable");
+  check(
+    (await dc("config", "ldap.password", "--secretenv", "LDAP_PASSWORD")).code === 0,
+    "config ldap.password from an environment variable",
+  );
   check((await dc("config", "ldap.port", "abc")).code !== 0, "a wrong value is refused");
   const shown = (await dc("config", "show")).out;
-  check(shown.includes("ldap.password: (set)") && !shown.includes("secret"), "config show hides the password");
+  check(
+    shown.includes("ldap.password: (set)") && !shown.includes("secret"),
+    "config show hides the password",
+  );
   const tested = await dc("test");
-  check(tested.code === 0 && /Read 9 entries/.test(tested.out), "test reads the whole directory without a login");
+  check(
+    tested.code === 0 && /Read 9 entries/.test(tested.out),
+    "test reads the whole directory without a login",
+  );
   check(received.parts === 0, "test sends nothing");
   check((await dc("sync")).code !== 0, "sync is refused before login");
   const login = await dc("login");
@@ -172,14 +212,24 @@ try {
   env.EDUNEON_DC_API_TOKEN = TOKEN;
   check((await dc("login")).code === 0, "login with the API token");
   const synced = await dc("sync");
-  check(synced.code === 0 && /5 created/.test(synced.out), "sync uploads and reports Cockpit's result");
-  check(received.entries.length === 9, `Cockpit received all 9 entries (got ${received.entries.length})`);
-  const leaked = received.entries.some((e) => Object.keys(e.attributes).some((a) => /password/i.test(a)));
+  check(
+    synced.code === 0 && /5 created/.test(synced.out),
+    "sync uploads and reports Cockpit's result",
+  );
+  check(
+    received.entries.length === 9,
+    `Cockpit received all 9 entries (got ${received.entries.length})`,
+  );
+  const leaked = received.entries.some((e) =>
+    Object.keys(e.attributes).some((a) => /password/i.test(a)),
+  );
   check(!leaked, "no password attribute was uploaded");
 } finally {
   directory.close();
   cockpit.close();
 }
 
-console.log(failures.length === 0 ? "\nAll checks passed." : `\n${failures.length} check(s) failed.`);
+console.log(
+  failures.length === 0 ? "\nAll checks passed." : `\n${failures.length} check(s) failed.`,
+);
 process.exit(failures.length === 0 ? 0 : 1);

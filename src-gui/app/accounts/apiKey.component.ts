@@ -59,7 +59,9 @@ export class ApiKeyComponent {
 
   /** Cockpit's page for API tokens, on the server this connector logs in to. */
   tokenPageUrl() {
-    return this.environmentService.getWebVaultUrl().replace(/\/+$/, "") + "/platform/service-accounts";
+    return (
+      this.environmentService.getWebVaultUrl().replace(/\/+$/, "") + "/platform/service-accounts"
+    );
   }
 
   async submit() {
