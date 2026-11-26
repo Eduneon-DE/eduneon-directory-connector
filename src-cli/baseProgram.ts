@@ -101,7 +101,7 @@ export abstract class BaseProgram {
     if (authed) {
       const organizationId = await this.stateService.getEntityId();
       this.processResponse(
-        Response.error("You are already logged in to" + organizationId + "."),
+        Response.error(`You are already logged in (directory "${organizationId}").`),
         true,
       );
     }

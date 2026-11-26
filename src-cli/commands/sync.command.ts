@@ -15,9 +15,12 @@ export class SyncCommand {
       const result = await this.syncService.sync(false, false);
       const groupCount = result[0] != null ? result[0].length : 0;
       const userCount = result[1] != null ? result[1].length : 0;
+      const outcome = this.syncService.lastOutcome;
       const res = new MessageResponse(
         this.i18nService.t("syncingComplete"),
-        this.i18nService.t("syncCounts", groupCount.toString(), userCount.toString()),
+        outcome != null
+          ? `${outcome.message}\n(Read ${outcome.received} entries; ${groupCount} groups and ${userCount} users by the local settings.)`
+          : this.i18nService.t("syncCounts", groupCount.toString(), userCount.toString()),
       );
       return Response.success(res);
     } catch (e) {

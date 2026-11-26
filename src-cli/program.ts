@@ -3,8 +3,6 @@ import * as path from "path";
 import chalk from "chalk";
 import { Command, OptionValues } from "commander";
 
-import { Utils } from "@/libs/utils/utils";
-
 import { BaseProgram } from "@/src-cli/baseProgram";
 import { UpdateCommand } from "@/src-cli/commands/update.command";
 import { Response } from "@/src-cli/models/response";
@@ -86,22 +84,13 @@ export class Program extends BaseProgram {
     });
 
     program
-      .command("login [clientId] [clientSecret]")
-      .description("Log into an organization account.", {
-        clientId: "Client_id part of your organization's API key",
-        clientSecret: "Client_secret part of your organization's API key",
-      })
-      .action(async (clientId: string, clientSecret: string, options: OptionValues) => {
+      .command("login")
+      .description(
+        "Log in to Cockpit with an API token. It is read from EDUNEON_DC_API_TOKEN, or asked for.",
+      )
+      .action(async () => {
         await this.exitIfAuthed();
-        const command = new LoginCommand(this.main.authService);
-
-        if (!Utils.isNullOrWhitespace(clientId)) {
-          process.env.BW_CLIENTID = clientId;
-        }
-        if (!Utils.isNullOrWhitespace(clientSecret)) {
-          process.env.BW_CLIENTSECRET = clientSecret;
-        }
-
+        const command = new LoginCommand(this.main.authService, this.stateService);
         const response = await command.run();
         this.processResponse(response);
       });
@@ -292,7 +281,7 @@ export class Program extends BaseProgram {
     if (authed) {
       const id = await this.stateService.getEntityId();
       this.processResponse(
-        Response.error("You are already logged in as organization." + id + "."),
+        Response.error(`You are already logged in (directory "${id}"). Run logout first.`),
         true,
       );
     }

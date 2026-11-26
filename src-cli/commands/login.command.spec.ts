@@ -1,60 +1,48 @@
 import { mock, MockProxy } from "jest-mock-extended";
 
 import { AuthService } from "@/libs/abstractions/auth.service";
+import { StateService } from "@/libs/abstractions/state.service";
 
-import { LoginCommand } from "./login.command";
+import { API_TOKEN_ENV, LoginCommand } from "./login.command";
 
-const clientId = "test_client_id";
-const clientSecret = "test_client_secret";
-
-// Mock responses from the inquirer prompt
-// This combines both prompt results into a single object which is returned both times
 jest.mock("inquirer", () => ({
-  createPromptModule: () => () => ({
-    clientId,
-    clientSecret,
-  }),
+  createPromptModule: () => () => ({ apiToken: "prompted-token" }),
 }));
 
 describe("LoginCommand", () => {
   let authService: MockProxy<AuthService>;
-
   let loginCommand: LoginCommand;
 
   beforeEach(() => {
-    // reset env variables
-    delete process.env.BW_CLIENTID;
-    delete process.env.BW_CLIENTSECRET;
-
+    delete process.env[API_TOKEN_ENV];
+    delete process.env.EDUNEON_DC_NOINTERACTION;
     authService = mock();
-
-    loginCommand = new LoginCommand(authService);
+    const stateService = mock<StateService>();
+    stateService.getEntityId.mockResolvedValue("Lincoln High");
+    stateService.getApiUrl.mockResolvedValue("http://localhost:5000/api");
+    loginCommand = new LoginCommand(authService, stateService);
   });
 
-  it("uses client id and secret stored in environment variables", async () => {
-    process.env.BW_CLIENTID = clientId;
-    process.env.BW_CLIENTSECRET = clientSecret;
+  it("uses the token from the environment", async () => {
+    process.env[API_TOKEN_ENV] = "env-token";
 
     const result = await loginCommand.run();
 
-    expect(authService.logIn).toHaveBeenCalledWith({ clientId, clientSecret });
-    expect(result).toMatchObject({
-      data: {
-        title: "You are logged in!",
-      },
-      success: true,
-    });
+    expect(authService.logIn).toHaveBeenCalledWith({ apiToken: "env-token" });
+    expect(result).toMatchObject({ success: true, data: { title: "You are logged in!" } });
   });
 
-  it("uses client id and secret prompted from the user", async () => {
+  it("asks for the token when none is set", async () => {
+    await loginCommand.run();
+    expect(authService.logIn).toHaveBeenCalledWith({ apiToken: "prompted-token" });
+  });
+
+  it("fails without prompting when interaction is off", async () => {
+    process.env.EDUNEON_DC_NOINTERACTION = "true";
+
     const result = await loginCommand.run();
 
-    expect(authService.logIn).toHaveBeenCalledWith({ clientId, clientSecret });
-    expect(result).toMatchObject({
-      data: {
-        title: "You are logged in!",
-      },
-      success: true,
-    });
+    expect(authService.logIn).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: false });
   });
 });

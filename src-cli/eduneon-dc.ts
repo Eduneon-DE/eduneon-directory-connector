@@ -10,7 +10,6 @@ import { ClientType } from "@/libs/enums/clientType";
 import { LogLevelType } from "@/libs/enums/logLevelType";
 import { AppIdService } from "@/libs/services/appId.service";
 import { AuthService } from "@/libs/services/auth.service";
-import { BatchRequestBuilder } from "@/libs/services/batch-request-builder";
 import { DefaultDirectoryFactoryService } from "@/libs/services/directory-factory.service";
 import { DefaultEnvironmentService as EnvironmentServiceImplementation } from "@/libs/services/environment/environment.service";
 import { applyServerOverride } from "@/libs/services/environment/server-override";
@@ -18,7 +17,6 @@ import { I18nService } from "@/libs/services/i18n.service";
 import { LowdbStorageService } from "@/libs/services/lowdbStorage.service";
 import { NativeSecureStorageService } from "@/libs/services/nativeSecureStorage.service";
 import { NoopMessagingService } from "@/libs/services/noopMessaging.service";
-import { SingleRequestBuilder } from "@/libs/services/single-request-builder";
 import {
   DefaultStateService,
   StateService,
@@ -30,7 +28,6 @@ import { TokenService as TokenServiceImplementation } from "@/libs/services/toke
 import { CliPlatformUtilsService } from "@/src-cli/services/cliPlatformUtils.service";
 import { ConsoleLogService } from "@/src-cli/services/consoleLog.service";
 import { NodeApiService } from "@/src-cli/services/node/nodeApi.service";
-import { NodeCryptoFunctionService } from "@/src-cli/services/node/nodeCryptoFunction.service";
 import { trustSystemCaCertificates } from "@/src-cli/services/node/trustSystemCaCertificates";
 
 import packageJson from "../package.json";
@@ -51,14 +48,11 @@ export class Main {
   appIdService: AppIdService;
   apiService: NodeApiService;
   environmentService: EnvironmentService;
-  cryptoFunctionService: NodeCryptoFunctionService;
   authService: AuthService;
   syncService: SyncService;
   stateService: StateService;
   stateMigrationService: StateMigrationService;
   directoryFactoryService: DirectoryFactoryService;
-  batchRequestBuilder: BatchRequestBuilder;
-  singleRequestBuilder: SingleRequestBuilder;
 
   constructor() {
     const applicationName = APPLICATION_NAME;
@@ -89,7 +83,6 @@ export class Main {
       this.platformUtilsService.isDev(),
       (level) => process.env.EDUNEON_DC_DEBUG !== "true" && level <= LogLevelType.Info,
     );
-    this.cryptoFunctionService = new NodeCryptoFunctionService();
     this.storageService = new LowdbStorageService(
       this.logService,
       null,
@@ -136,13 +129,7 @@ export class Main {
       customUserAgent,
     );
 
-    this.authService = new AuthService(
-      this.apiService,
-      this.appIdService,
-      this.platformUtilsService,
-      this.messagingService,
-      this.stateService,
-    );
+    this.authService = new AuthService(this.apiService, this.messagingService, this.stateService);
 
     this.directoryFactoryService = new DefaultDirectoryFactoryService(
       this.logService,
@@ -150,17 +137,10 @@ export class Main {
       this.stateService,
     );
 
-    this.batchRequestBuilder = new BatchRequestBuilder();
-    this.singleRequestBuilder = new SingleRequestBuilder();
-
     this.syncService = new SyncService(
-      this.cryptoFunctionService,
       this.apiService,
       this.messagingService,
-      this.i18nService,
       this.stateService,
-      this.batchRequestBuilder,
-      this.singleRequestBuilder,
       this.directoryFactoryService,
     );
 
