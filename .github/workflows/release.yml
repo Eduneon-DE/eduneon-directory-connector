@@ -198,10 +198,112 @@ jobs:
           path: dist-cli/eduneon-dc-*.zip
           if-no-files-found: error
 
+  # Installs what was just built the way an admin would, from the command line, on a clean machine of each
+  # system, and checks that the CLI and the desktop app start. A release is only published when this passes.
+  # (It cannot sync: GitHub's machines reach no Cockpit or directory.)
+  smoke:
+    name: Install test (${{ matrix.name }})
+    needs: [setup, gui, cli]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-2025
+            gui: gui-windows-x64
+            cli: cli-windows
+          - name: linux
+            os: ubuntu-24.04
+            gui: gui-linux-x64
+            cli: cli-linux
+          - name: macos
+            os: macos-15
+            gui: gui-macos-arm64
+            cli: cli-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ matrix.gui }}
+          path: artifacts
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ matrix.cli }}
+          path: artifacts
+
+      - name: Windows - install the CLI and the app, start both
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = Get-ChildItem artifacts -Filter "eduneon-dc-windows-*.zip" | Select-Object -First 1
+          $setup = Get-ChildItem artifacts -Filter "Eduneon-Directory-Connector-Setup-*.exe" | Select-Object -First 1
+          ./scripts/install.ps1 -From $zip.FullName
+          $cli = Join-Path $env:LOCALAPPDATA "Programs\eduneon-dc\eduneon-dc.exe"
+          $version = & $cli --version
+          if ($LASTEXITCODE -ne 0) { throw "eduneon-dc --version failed" }
+          Write-Host "CLI version: $version"
+          ./scripts/install.ps1 -From $setup.FullName
+          $app = Get-ChildItem "$env:ProgramFiles", "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Eduneon Directory Connector.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $app) { throw "The desktop app was not installed" }
+          Write-Host "App installed: $($app.FullName)"
+          $process = Start-Process -FilePath $app.FullName -PassThru
+          Start-Sleep -Seconds 20
+          if ($process.HasExited) { throw "The desktop app exited with code $($process.ExitCode)" }
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+          [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+          $bitmap.Save("$PWD/screenshot-windows.png")
+          Stop-Process -Id $process.Id -Force
+
+      - name: Linux - install the CLI and the app, start both
+        if: matrix.name == 'linux'
+        run: |
+          set -eu
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb imagemagick libfuse2t64 >/dev/null
+          sh scripts/install.sh --from artifacts/eduneon-dc-linux-*.zip
+          echo "CLI version: $("$HOME/.local/bin/eduneon-dc" --version)"
+          sh scripts/install.sh --from artifacts/*.AppImage
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1280x800x24 &
+          sleep 2
+          "$HOME/.local/bin/eduneon-directory-connector" --no-sandbox &
+          app=$!
+          sleep 20
+          kill -0 "$app" || { echo "The desktop app exited"; exit 1; }
+          import -window root screenshot-linux.png
+          kill "$app"
+
+      - name: macOS - install the CLI and the app, start both
+        if: matrix.name == 'macos'
+        run: |
+          set -eu
+          sh scripts/install.sh --from artifacts/eduneon-dc-macos-arm64-*.zip
+          echo "CLI version: $("$HOME/.local/bin/eduneon-dc" --version)"
+          sh scripts/install.sh --app --from artifacts/*-arm64.dmg --apps-dir "$HOME/Applications"
+          app="$HOME/Applications/Eduneon Directory Connector.app"
+          codesign --verify --deep --strict "$app"
+          open "$app"
+          sleep 20
+          pgrep -f "Eduneon Directory Connector.app/Contents/MacOS" >/dev/null || { echo "The desktop app exited"; exit 1; }
+          screencapture -x screenshot-macos.png || true
+          pkill -f "Eduneon Directory Connector.app/Contents/MacOS" || true
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: install-test-${{ matrix.name }}
+          path: screenshot-*.png
+          if-no-files-found: ignore
+
   release:
     name: Publish GitHub release
     if: github.ref_type == 'tag'
-    needs: [setup, gui, cli]
+    needs: [setup, gui, cli, smoke]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
