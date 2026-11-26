@@ -70,12 +70,16 @@ fetch() {
   if [ -z "$VERSION" ]; then
     # The latest release's tag (vX.Y.Z) without asking the API: GitHub redirects /releases/latest to it.
     tag="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")"
+    # Without any release GitHub redirects to /releases instead of /releases/tag/vX.Y.Z.
+    case "$tag" in
+      */releases/tag/v*) ;;
+      *) fail "no release of the Directory Connector is published yet; install from a downloaded file: sh install.sh --from <file>" ;;
+    esac
     tag="${tag##*/}"
-    [ -n "$tag" ] && [ "$tag" != "latest" ] || fail "no release found"
     VERSION="${tag#v}"
   fi
   name="$(asset_name "$1")"
-  say "Downloading $name"
+  say "Downloading $name" >&2
   curl -fL --progress-bar -o "$TMP/$name" "https://github.com/${REPO}/releases/download/v${VERSION}/${name}" ||
     fail "download failed: $name (version ${VERSION})"
   echo "$TMP/$name"
@@ -151,9 +155,11 @@ if [ -n "$FROM" ]; then
   exit 0
 fi
 
-install_cli "$(fetch cli)"
+# fetch fails inside $(…), a subshell: stop here rather than install an empty path.
+cli_zip="$(fetch cli)" || exit 1
+install_cli "$cli_zip"
 if [ "$APP" = 1 ]; then
-  file="$(fetch app)"
+  file="$(fetch app)" || exit 1
   case "$PLATFORM" in
     macos) install_app_macos "$file" ;;
     linux) install_app_linux "$file" ;;

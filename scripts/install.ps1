@@ -31,7 +31,10 @@ function Get-LatestVersion {
   $response = $request.GetResponse()
   $location = $response.Headers["Location"]
   $response.Close()
-  if (-not $location) { throw "No release found." }
+  # Without any release GitHub redirects to /releases instead of /releases/tag/vX.Y.Z.
+  if (-not $location -or $location -notmatch "/releases/tag/v[^/]+$") {
+    throw "No release of the Directory Connector is published yet. Install from a downloaded file: .\install.ps1 -From <file>"
+  }
   return ($location -split "/")[-1].TrimStart("v")
 }
 
