@@ -1,0 +1,9 @@
+{
+  "name": "eduneon-dc-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end test of an installed eduneon-dc against a test LDAP and a test Cockpit.",
+  "dependencies": {
+    "ldapjs": "3.0.7"
+  }
+}

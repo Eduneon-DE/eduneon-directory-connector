@@ -12,6 +12,8 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    # Every push to a feature branch builds and tests the installers too; only a tag publishes.
+    branches: ["feature/**", "fix/**"]
   workflow_dispatch:
 
 permissions:
@@ -225,6 +227,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ needs.setup.outputs.node_version }}
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: ${{ matrix.gui }}
@@ -292,6 +297,20 @@ jobs:
           pgrep -f "Eduneon Directory Connector.app/Contents/MacOS" >/dev/null || { echo "The desktop app exited"; exit 1; }
           screencapture -x screenshot-macos.png || true
           pkill -f "Eduneon Directory Connector.app/Contents/MacOS" || true
+
+      # The installed CLI, set up from the terminal as on a customer's server, against a test LDAP and a
+      # test Cockpit on the same machine: configure, test, log in, sync, check what arrived.
+      - name: End-to-end sync with the installed CLI
+        shell: bash
+        run: |
+          set -eu
+          if [ "${{ matrix.name }}" = windows ]; then
+            CLI="$LOCALAPPDATA/Programs/eduneon-dc/eduneon-dc.exe"
+          else
+            CLI="$HOME/.local/bin/eduneon-dc"
+          fi
+          (cd test/e2e && npm ci --no-audit --no-fund)
+          node test/e2e/e2e.mjs "$CLI"
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: always()
