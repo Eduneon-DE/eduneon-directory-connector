@@ -11,7 +11,7 @@
     "app": "build"
   },
   "afterSign": "scripts/notarize.mjs",
-  "asarUnpack": ["node_modules/dc-native/**"],
+  "asarUnpack": ["node_modules/dc-native/*.node"],
   "mac": {
     "artifactName": "Eduneon-Directory-Connector-${version}-${arch}.${ext}",
     "category": "public.app-category.productivity",
@@ -74,5 +74,12 @@
       "repo": "eduneon-directory-connector",
       "releaseType": "release"
     }
+  ],
+  "files": [
+    "**/*",
+    "!node_modules/**",
+    "node_modules/dc-native/package.json",
+    "node_modules/dc-native/index.mjs",
+    "node_modules/dc-native/*.node"
   ]
 }
