@@ -19,7 +19,7 @@ export class SyncCommand {
       const res = new MessageResponse(
         this.i18nService.t("syncingComplete"),
         outcome != null
-          ? `${outcome.message}\n(Read ${outcome.received} entries; ${groupCount} groups and ${userCount} users by the local settings.)`
+          ? `${outcome.message}\n(Sent ${outcome.received} directory entries.)`
           : this.i18nService.t("syncCounts", groupCount.toString(), userCount.toString()),
       );
       return Response.success(res);

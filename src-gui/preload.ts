@@ -69,6 +69,12 @@ const ipcBridge = {
       test: boolean,
     ): Promise<[Jsonify<GroupEntry>[] | null, Jsonify<UserEntry>[] | null, SyncOutcome | null]> =>
       ipcRenderer.invoke("sync:run", { force, test }),
+    /** What a sync would send, counted per object type; nothing is sent. */
+    preview: (): Promise<{
+      baseDn: string;
+      total: number;
+      byClass: Array<{ objectClass: string; count: number }>;
+    }> => ipcRenderer.invoke("sync:preview"),
   },
 };
 

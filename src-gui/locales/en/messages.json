@@ -533,7 +533,7 @@
     "message": "Testing"
   },
   "testingDesc": {
-    "message": "You can run tests to see how your directory and sync settings are working. Tests will not send anything to Eduneon."
+    "message": "Test what a sync would send: the directory is read exactly as for a sync, and nothing is sent to Eduneon."
   },
   "testNow": {
     "message": "Test Now"
@@ -786,5 +786,44 @@
   },
   "directoryIdDesc": {
     "message": "Only needed if your organization has more than one Directory Connector directory. Cockpit shows it in the directory setup."
+  },
+  "setupDirectoryFirst": {
+    "message": "Set up your directory first: open Settings, choose the directory type and enter its server. Then use Test Now and Sync Now here."
+  },
+  "lastSync": {
+    "message": "Last sync"
+  },
+  "notYet": {
+    "message": "not yet"
+  },
+  "automaticSync": {
+    "message": "Automatic sync"
+  },
+  "automaticSyncOn": {
+    "message": "On"
+  },
+  "automaticSyncOff": {
+    "message": "Off"
+  },
+  "testWouldSend": {
+    "message": "A sync would send $COUNT$ entries from:",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "445"
+      }
+    }
+  },
+  "testType": {
+    "message": "Object type"
+  },
+  "testEntries": {
+    "message": "Entries"
+  },
+  "testChooseInCockpit": {
+    "message": "Everything under the root path is sent. What becomes accounts, schools, classes, devices or tickets is chosen in Cockpit."
+  },
+  "ldapSentWhole": {
+    "message": "Every sync sends everything under the root path to Cockpit (passwords are never sent). What is imported, and as what (accounts, schools, classes, devices, tickets), is set up in Cockpit under Platform → Authentication."
   }
 }

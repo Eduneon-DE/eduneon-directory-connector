@@ -77,7 +77,8 @@ describe("SyncService", () => {
   it("always reads the full directory and pushes the snapshot", async () => {
     await syncService.sync(false, false);
 
-    expect(directory.getEntries).toHaveBeenCalledWith(true, false);
+    // The upload is the whole read: no user/group search by the old paths (CN=Users breaks on OpenLDAP).
+    expect(directory.getEntries).not.toHaveBeenCalled();
     expect(apiService.postDirectorySync).toHaveBeenCalledWith({
       providerId: 7,
       dryRun: false,
@@ -109,16 +110,31 @@ describe("SyncService", () => {
     expect(apiService.postDirectorySync).not.toHaveBeenCalled();
   });
 
-  it("fails the sync when Cockpit reports errors, and restores the delta tokens", async () => {
-    stateService.getUserDelta.mockResolvedValue("delta-before");
+  it("completes the sync with a warning when Cockpit could not import some entries", async () => {
     apiService.postDirectorySync.mockResolvedValue({
       ...okResponse,
       issues: [{ targetModel: "", severity: "error", code: "x", message: "Mapping is broken" }],
     });
 
-    await expect(syncService.sync(false, false)).rejects.toThrow("Mapping is broken");
-    expect(stateService.setUserDelta).toHaveBeenCalledWith("delta-before");
-    expect(stateService.setLastUserSync).not.toHaveBeenCalled();
+    await syncService.sync(false, false);
+
+    expect(stateService.setLastUserSync).toHaveBeenCalled();
+    expect(syncService.lastOutcome?.needsAttention).toBe(true);
+    expect(syncService.lastOutcome?.message).toContain("Needs attention in Cockpit");
+    expect(syncService.lastOutcome?.message).toContain("Mapping is broken");
+  });
+
+  it("says the upload was only stored when Cockpit does not import uploads automatically", async () => {
+    apiService.postDirectorySync.mockResolvedValue({
+      ...okResponse,
+      status: "stored",
+      mappings: [],
+    });
+
+    await syncService.sync(false, false);
+
+    expect(syncService.lastOutcome?.needsAttention).toBe(false);
+    expect(syncService.lastOutcome?.message).toContain("nothing was imported");
   });
 
   it("uploads a large directory in parts under one upload id, the schema only once", async () => {

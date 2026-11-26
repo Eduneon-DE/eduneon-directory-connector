@@ -170,6 +170,8 @@ export class Main {
       await this.stateService.clearAuthTokens();
     });
 
+    handle("sync:preview", () => syncService.preview());
+
     handle("sync:run", async (_event, { force, test }: { force: boolean; test: boolean }) => {
       const [groups, users] = await syncService.sync(force, test);
       return [

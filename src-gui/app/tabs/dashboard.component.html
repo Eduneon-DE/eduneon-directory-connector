@@ -1,26 +1,34 @@
 <div class="card mb-3">
   <h3 class="card-header">{{ "sync" | i18n }}</h3>
   <div class="card-body">
+    @if (!directoryReady()) {
+      <div class="alert alert-info" role="status">{{ "setupDirectoryFirst" | i18n }}</div>
+    }
     <p>
-      {{ "lastGroupSync" | i18n }}:
-      @if (!lastGroupSync()) {
-        <span>-</span>
-      }
-      {{ lastGroupSync() | date: "medium" }}
-      <br />
-      {{ "lastUserSync" | i18n }}:
+      {{ "lastSync" | i18n }}:
       @if (!lastUserSync()) {
-        <span>-</span>
+        <span>{{ "notYet" | i18n }}</span>
       }
       {{ lastUserSync() | date: "medium" }}
     </p>
+    @if (lastResult(); as result) {
+      <div
+        class="alert"
+        [class.alert-warning]="result.needsAttention"
+        [class.alert-success]="!result.needsAttention"
+        role="status"
+        style="white-space: pre-line"
+      >
+        {{ result.message }}
+      </div>
+    }
     <p>
-      {{ "syncStatus" | i18n }}:
+      {{ "automaticSync" | i18n }}:
       @if (syncRunning()) {
-        <strong class="text-success">{{ "running" | i18n }}</strong>
+        <strong class="text-success">{{ "automaticSyncOn" | i18n }}</strong>
       }
       @if (!syncRunning()) {
-        <strong class="text-danger">{{ "stopped" | i18n }}</strong>
+        <strong class="text-muted">{{ "automaticSyncOff" | i18n }}</strong>
       }
     </p>
     <form #startForm="appApiAction" [appApiAction]="startPromise()" class="d-inline">
@@ -28,7 +36,7 @@
         type="button"
         (click)="start()"
         class="btn btn-primary"
-        [disabled]="startForm.loading()"
+        [disabled]="startForm.loading() || !directoryReady()"
       >
         <i class="bwi bwi-spinner bwi-fw bwi-spin" [hidden]="!startForm.loading()"></i>
         {{ "startSync" | i18n }}
@@ -42,7 +50,7 @@
         type="button"
         (click)="sync()"
         class="btn btn-primary"
-        [disabled]="syncForm.loading()"
+        [disabled]="syncForm.loading() || !directoryReady()"
       >
         {{ "syncNow" | i18n }}
       </button>
@@ -58,101 +66,39 @@
         type="button"
         (click)="simulate()"
         class="btn btn-primary"
-        [disabled]="simForm.loading()"
+        [disabled]="simForm.loading() || !directoryReady()"
       >
         <i class="bwi bwi-spinner bwi-fw bwi-spin" [hidden]="!simForm.loading()"></i>
         {{ "testNow" | i18n }}
       </button>
     </form>
-    <div class="form-check mt-2">
-      <input
-        class="form-check-input"
-        type="checkbox"
-        id="simSinceLast"
-        [ngModel]="simSinceLast()"
-        (ngModelChange)="simSinceLast.set($event)"
-      />
-      <label class="form-check-label" for="simSinceLast">{{ "testLastSync" | i18n }}</label>
-    </div>
-    @if (!simForm.loading() && (simUsers() || simGroups())) {
+    @if (!simForm.loading() && preview(); as result) {
       <hr />
-      <div class="row">
-        <div class="col-lg">
-          <h4>{{ "users" | i18n }}</h4>
-          @if (simEnabledUsers() && simEnabledUsers().length) {
-            <ul class="bwi-ul testing-list">
-              @for (u of simEnabledUsers(); track u) {
-                <li title="{{ u.referenceId }}">
-                  <i class="bwi bwi-li bwi-user"></i>
-                  {{ u.displayName }}
-                </li>
-              }
-            </ul>
+      <p>
+        <strong>{{ "testWouldSend" | i18n: result.total.toString() }}</strong>
+        @if (result.baseDn) {
+          <br /><code>{{ result.baseDn }}</code>
+        }
+      </p>
+      <table class="table table-sm mb-2" style="max-width: 32rem">
+        <thead>
+          <tr>
+            <th>{{ "testType" | i18n }}</th>
+            <th class="text-end">{{ "testEntries" | i18n }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of result.byClass; track row.objectClass) {
+            <tr>
+              <td>
+                <code>{{ row.objectClass }}</code>
+              </td>
+              <td class="text-end">{{ row.count }}</td>
+            </tr>
           }
-          @if (!simEnabledUsers() || !simEnabledUsers().length) {
-            <p>
-              {{ "noUsers" | i18n }}
-            </p>
-          }
-          <h4>{{ "disabledUsers" | i18n }}</h4>
-          @if (simDisabledUsers() && simDisabledUsers().length) {
-            <ul class="bwi-ul testing-list">
-              @for (u of simDisabledUsers(); track u) {
-                <li title="{{ u.referenceId }}">
-                  <i class="bwi bwi-li bwi-user"></i>
-                  {{ u.displayName }}
-                </li>
-              }
-            </ul>
-          }
-          @if (!simDisabledUsers() || !simDisabledUsers().length) {
-            <p>
-              {{ "noUsers" | i18n }}
-            </p>
-          }
-          <h4>{{ "deletedUsers" | i18n }}</h4>
-          @if (simDeletedUsers() && simDeletedUsers().length) {
-            <ul class="bwi-ul testing-list">
-              @for (u of simDeletedUsers(); track u) {
-                <li title="{{ u.referenceId }}">
-                  <i class="bwi bwi-li bwi-user"></i>
-                  {{ u.displayName }}
-                </li>
-              }
-            </ul>
-          }
-          @if (!simDeletedUsers() || !simDeletedUsers().length) {
-            <p>
-              {{ "noUsers" | i18n }}
-            </p>
-          }
-        </div>
-        <div class="col-lg">
-          <h4>{{ "groups" | i18n }}</h4>
-          @if (simGroups() && simGroups().length) {
-            <ul class="bwi-ul testing-list">
-              @for (g of simGroups(); track g) {
-                <li title="{{ g.referenceId }}">
-                  <i class="bwi bwi-li bwi-sitemap"></i>
-                  {{ g.displayName }}
-                  @if (g.users && g.users.length) {
-                    <ul class="small">
-                      @for (u of g.users; track u) {
-                        <li title="{{ u.referenceId }}">
-                          {{ u.displayName }}
-                        </li>
-                      }
-                    </ul>
-                  }
-                </li>
-              }
-            </ul>
-          }
-          @if (!simGroups() || !simGroups().length) {
-            <p>{{ "noGroups" | i18n }}</p>
-          }
-        </div>
-      </div>
+        </tbody>
+      </table>
+      <p class="text-muted mb-0">{{ "testChooseInCockpit" | i18n }}</p>
     }
   </div>
 </div>

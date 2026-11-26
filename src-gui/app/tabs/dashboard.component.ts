@@ -15,9 +15,6 @@ import { I18nService } from "@/libs/abstractions/i18n.service";
 import { MessagingService } from "@/libs/abstractions/messaging.service";
 import { PlatformUtilsService } from "@/libs/abstractions/platformUtils.service";
 import { StateService } from "@/libs/abstractions/state.service";
-import { GroupEntry } from "@/libs/models/groupEntry";
-import { UserEntry } from "@/libs/models/userEntry";
-import { ConnectorUtils } from "@/libs/utils";
 
 import { ApiActionDirective } from "@/src-gui/angular/directives/api-action.directive";
 import { I18nPipe } from "@/src-gui/angular/pipes/i18n.pipe";
@@ -35,18 +32,17 @@ const BroadcasterSubscriptionId = "DashboardComponent";
   imports: [ApiActionDirective, DatePipe, FormsModule, I18nPipe],
 })
 export class DashboardComponent implements OnInit, OnDestroy {
-  simGroups = signal<GroupEntry[]>(null);
-  simUsers = signal<UserEntry[]>(null);
-  simEnabledUsers = signal<UserEntry[]>([]);
-  simDisabledUsers = signal<UserEntry[]>([]);
-  simDeletedUsers = signal<UserEntry[]>([]);
-  simPromise = signal<Promise<SyncResult>>(null);
-  simSinceLast = signal(false);
+  simPromise = signal<Promise<unknown>>(null);
+  preview = signal<Awaited<ReturnType<RendererSyncService["preview"]>> | null>(null);
   syncPromise = signal<Promise<SyncResult>>(null);
   startPromise = signal<Promise<any>>(null);
   lastGroupSync = signal<Date>(null);
   lastUserSync = signal<Date>(null);
   syncRunning = signal(false);
+  /** A directory type is chosen in Settings: without one there is nothing to sync, and saying so is not an error. */
+  directoryReady = signal(true);
+  /** What Cockpit did with the last upload from this window. */
+  lastResult = signal<{ message: string; needsAttention: boolean } | null>(null);
 
   private cdr = inject(ChangeDetectorRef);
   private syncService = inject(RendererSyncService);
@@ -68,6 +64,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     });
 
     this.syncRunning.set(!!(await this.stateService.getSyncingDir()));
+    this.directoryReady.set((await this.stateService.getDirectoryType()) != null);
     await this.updateLastSync();
   }
 
@@ -98,8 +95,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
     const userCount = result[1] != null ? result[1].length : 0;
     // What Cockpit did with the upload is the news; the local counts only describe the preview.
     const outcome = result[2];
+    if (outcome != null) {
+      this.lastResult.set({ message: outcome.message, needsAttention: !!outcome.needsAttention });
+    }
     this.platformUtilsService.showToast(
-      outcome?.status === "awaiting-setup" ? "info" : "success",
+      outcome?.needsAttention ? "warning" : outcome?.status === "synced" ? "success" : "info",
       outcome != null ? this.i18nService.t("syncingComplete") : null,
       outcome?.message ??
         this.i18nService.t("syncCounts", groupCount.toString(), userCount.toString()),
@@ -107,28 +107,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
     );
   }
 
+  /** What a sync would send, per object type: the whole directory under the root path, nothing filtered here. */
   async simulate() {
-    this.simGroups.set([]);
-    this.simUsers.set([]);
-    this.simEnabledUsers.set([]);
-    this.simDisabledUsers.set([]);
-    this.simDeletedUsers.set([]);
-
+    this.preview.set(null);
     try {
-      const promise = this.syncService.run(!this.simSinceLast(), true);
+      const promise = this.syncService.preview();
       this.simPromise.set(promise);
-      const [rawGroups, rawUsers]: SyncResult = await promise;
-      const groups = rawGroups?.map((g) => GroupEntry.fromJSON(g)) ?? [];
-      const users = rawUsers?.map((u) => UserEntry.fromJSON(u)) ?? [];
-      const simResult = ConnectorUtils.buildSimResult(groups, users, this.i18nService);
-      this.simGroups.set(simResult.groups);
-      this.simUsers.set(simResult.users);
-      this.simEnabledUsers.set(simResult.enabledUsers);
-      this.simDisabledUsers.set(simResult.disabledUsers);
-      this.simDeletedUsers.set(simResult.deletedUsers);
+      this.preview.set(await promise);
     } catch {
-      this.simGroups.set(null);
-      this.simUsers.set(null);
+      this.preview.set(null);
     } finally {
       this.cdr.markForCheck();
     }

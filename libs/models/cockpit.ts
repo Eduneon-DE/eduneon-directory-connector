@@ -40,9 +40,10 @@ export interface DirectorySyncResponse {
   provider: { id: number; name: string };
   /**
    * receiving: a part was stored, send the next. awaiting-setup: stored, but the import is not set
-   * up in Cockpit yet. previewed / synced: applied (dry run or for real).
+   * up in Cockpit yet. stored: kept in Cockpit, not imported (automatic import is off there).
+   * previewed / synced: applied (dry run or for real).
    */
-  status: "receiving" | "awaiting-setup" | "previewed" | "synced";
+  status: "receiving" | "awaiting-setup" | "stored" | "previewed" | "synced";
   uploadId: string;
   dryRun: boolean;
   received: number;

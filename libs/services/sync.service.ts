@@ -19,6 +19,8 @@ export interface SyncOutcome {
   directory: string;
   received: number;
   message: string;
+  /** Cockpit took the upload but some entries need an admin there: shown as a warning, not as a failed sync. */
+  needsAttention: boolean;
 }
 
 /**
@@ -62,7 +64,13 @@ export class SyncService {
     this.lastOutcome = null;
     this.messagingService.send("dirSyncStarted");
     try {
-      const [groups, users] = await directoryService.getEntries(true, test);
+      // A directory read whole for Cockpit (LDAP) needs no user/group search to upload: that search follows the
+      // Bitwarden paths and filters (CN=Users by default) and only fails on servers laid out otherwise. A test still
+      // runs it, to show what was found.
+      const [groups, users] =
+        test || directoryService.readSnapshot == null
+          ? await directoryService.getEntries(true, test)
+          : [[], []];
 
       if (test) {
         this.messagingService.send("dirSyncCompleted", { successfully: true });
@@ -78,18 +86,22 @@ export class SyncService {
       }
 
       const result = await this.upload(snapshot);
-      const errors = result?.issues?.filter((i) => i.severity === "error") ?? [];
-      if (errors.length > 0) {
-        throw new Error(
-          "Cockpit received the directory but reported problems:\n" +
-            errors.map((i) => `• ${i.message}`).join("\n"),
-        );
-      }
+      // The upload reached Cockpit: that is a completed sync. What Cockpit could not import is for an admin there,
+      // said as such, not as "an error has occurred" on this machine.
+      const problems = result?.issues?.filter((i) => i.severity === "error") ?? [];
+      const needsAttention =
+        problems.length > 0 ||
+        (result?.mappings ?? []).some((m) => m.errors > 0 || m.conflicts > 0);
+      const described = SyncService.describe(result);
       this.lastOutcome = {
         status: result.status,
         directory: result.provider.name,
         received: result.received,
-        message: SyncService.describe(result),
+        needsAttention,
+        message: needsAttention
+          ? `${described}\n\nNeeds attention in Cockpit (Platform → Authentication → "${result.provider.name}")` +
+            (problems.length > 0 ? `:\n${problems.map((i) => `• ${i.message}`).join("\n")}` : ".")
+          : described,
       };
 
       await this.saveSyncTimes(syncConfig, now);
@@ -138,11 +150,17 @@ export class SyncService {
 
   /** What Cockpit did with the upload, for the person who pressed "Sync". */
   static describe(result: DirectorySyncResponse): string {
+    if (result?.status === "stored") {
+      return (
+        `Uploaded ${result.received} directory entries to "${result.provider.name}". ` +
+        "They are stored in Cockpit; nothing was imported. Start the import in Cockpit (Platform → Authentication), " +
+        'or switch on "Import each upload automatically" there.'
+      );
+    }
     if (result?.status === "awaiting-setup") {
       return (
         `Uploaded ${result.received} directory entries to "${result.provider.name}". ` +
-        "Finish the setup in Cockpit (Platform → Authentication): choose what to import and run the first import. " +
-        "From then on every sync is applied automatically."
+        "Finish the setup in Cockpit (Platform → Authentication): choose what to import and run the first import."
       );
     }
     if (result?.mappings == null || result.mappings.length === 0) {
@@ -185,7 +203,10 @@ export class SyncService {
     if (directoryService == null) {
       throw new Error("Cannot load directory service.");
     }
-    const [groups, users] = await directoryService.getEntries(true, true);
+    const [groups, users] =
+      directoryService.readSnapshot == null
+        ? await directoryService.getEntries(true, true)
+        : [[], []];
     const snapshot = await SyncService.snapshotOf(directoryService, dirType, groups, users);
     const counts = new Map<string, number>();
     for (const entry of snapshot.entries) {
@@ -266,12 +287,9 @@ export class SyncService {
     return { baseDn: "", entries };
   }
 
-  private async saveSyncTimes(syncConfig: SyncConfiguration, time: Date) {
-    if (syncConfig.groups) {
-      await this.stateService.setLastGroupSync(time);
-    }
-    if (syncConfig.users) {
-      await this.stateService.setLastUserSync(time);
-    }
+  // The whole directory went to Cockpit: that is when it last synced, whatever the user/group switches say.
+  private async saveSyncTimes(_syncConfig: SyncConfiguration, time: Date) {
+    await this.stateService.setLastGroupSync(time);
+    await this.stateService.setLastUserSync(time);
   }
 }

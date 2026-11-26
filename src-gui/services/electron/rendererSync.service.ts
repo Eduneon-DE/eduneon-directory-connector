@@ -11,4 +11,8 @@ export class RendererSyncService {
   ): Promise<[Jsonify<GroupEntry>[] | null, Jsonify<UserEntry>[] | null, SyncOutcome | null]> {
     return ipc.sync.run(force, test);
   }
+
+  preview(): ReturnType<typeof ipc.sync.preview> {
+    return ipc.sync.preview();
+  }
 }
