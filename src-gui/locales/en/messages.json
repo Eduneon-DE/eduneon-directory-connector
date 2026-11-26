@@ -20,20 +20,8 @@
   "emailRequired": {
     "message": "Email address is required."
   },
-  "clientIdRequired": {
-    "message": "Client Id is required."
-  },
-  "invalidClientId": {
-    "message": "Invalid Client Id provided."
-  },
-  "clientSecretRequired": {
-    "message": "Client Secret is required."
-  },
   "secretTooLargeForWindows": {
     "message": "This value is too large to store on Windows. Please shorten it."
-  },
-  "orgApiKeyRequired": {
-    "message": "Api Key must belong to an Organization"
   },
   "failedToSaveCredentials": {
     "message": "Failed to save credentials"
@@ -146,29 +134,8 @@
   "twoStepOptions": {
     "message": "Two-step Login Options"
   },
-  "selfHostedEnvironment": {
-    "message": "Self-hosted Environment"
-  },
-  "selfHostedEnvironmentFooter": {
-    "message": "Specify the base URL of your Eduneon server."
-  },
-  "customEnvironment": {
-    "message": "Custom Environment"
-  },
-  "customEnvironmentFooter": {
-    "message": "For advanced users. You can specify the base URL of each service independently."
-  },
   "baseUrl": {
     "message": "Server URL"
-  },
-  "webVaultUrl": {
-    "message": "Web Vault Server URL"
-  },
-  "apiUrl": {
-    "message": "API Server URL"
-  },
-  "identityUrl": {
-    "message": "Identity Server URL"
   },
   "environmentSaved": {
     "message": "The environment URLs have been saved."
@@ -627,7 +594,7 @@
     "message": "Welcome to the Eduneon Directory Connector"
   },
   "logInDesc": {
-    "message": "Log in with an organization API key below."
+    "message": "Log in with a Cockpit API token to sync your directory to Eduneon."
   },
   "dirConfigIncomplete": {
     "message": "Directory configuration incomplete."
@@ -792,5 +759,32 @@
   },
   "authenticationFailed": {
     "message": "Authentication failed"
+  },
+  "apiToken": {
+    "message": "API token"
+  },
+  "apiTokenRequired": {
+    "message": "An API token is required."
+  },
+  "apiTokenDesc": {
+    "message": "In Cockpit, open Platform → Service accounts, create a token for an account that may manage identity providers, and paste it here."
+  },
+  "createApiToken": {
+    "message": "Create a token in Cockpit"
+  },
+  "cockpitServer": {
+    "message": "Cockpit server"
+  },
+  "cockpitServerDesc": {
+    "message": "Where your Eduneon Cockpit runs. Leave it empty to use the Eduneon cloud."
+  },
+  "cockpitServerHint": {
+    "message": "Only change this if Eduneon gave you a different address."
+  },
+  "directoryId": {
+    "message": "Directory ID (optional)"
+  },
+  "directoryIdDesc": {
+    "message": "Only needed if your organization has more than one Directory Connector directory. Cockpit shows it in the directory setup."
   }
 }

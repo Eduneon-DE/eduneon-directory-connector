@@ -6,54 +6,20 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <h4>{{ "selfHostedEnvironment" | i18n }}</h4>
-        <p>{{ "selfHostedEnvironmentFooter" | i18n }}</p>
+        <h4>{{ "cockpitServer" | i18n }}</h4>
+        <p>{{ "cockpitServerDesc" | i18n }}</p>
         <div class="mb-3">
           <label for="baseUrl" class="form-label">{{ "baseUrl" | i18n }}</label>
           <input
             id="baseUrl"
             type="text"
             name="BaseUrl"
+            placeholder="https://app.eduneon.com"
             [ngModel]="baseUrl()"
             (ngModelChange)="baseUrl.set($event)"
             class="form-control"
           />
-          <div class="form-text">{{ "ex" | i18n }} https://cockpit.example.com</div>
-        </div>
-        <h4>{{ "customEnvironment" | i18n }}</h4>
-        <p>{{ "customEnvironmentFooter" | i18n }}</p>
-        <div class="mb-3">
-          <label for="webVaultUrl" class="form-label">{{ "webVaultUrl" | i18n }}</label>
-          <input
-            id="webVaultUrl"
-            type="text"
-            name="WebVaultUrl"
-            [ngModel]="webVaultUrl()"
-            (ngModelChange)="webVaultUrl.set($event)"
-            class="form-control"
-          />
-        </div>
-        <div class="mb-3">
-          <label for="apiUrl" class="form-label">{{ "apiUrl" | i18n }}</label>
-          <input
-            id="apiUrl"
-            type="text"
-            name="ApiUrl"
-            [ngModel]="apiUrl()"
-            (ngModelChange)="apiUrl.set($event)"
-            class="form-control"
-          />
-        </div>
-        <div class="mb-3">
-          <label for="identityUrl" class="form-label">{{ "identityUrl" | i18n }}</label>
-          <input
-            id="identityUrl"
-            type="text"
-            name="IdentityUrl"
-            [ngModel]="identityUrl()"
-            (ngModelChange)="identityUrl.set($event)"
-            class="form-control"
-          />
+          <div class="form-text">{{ "cockpitServerHint" | i18n }}</div>
         </div>
       </div>
       <div class="modal-footer justify-content-start">

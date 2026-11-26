@@ -3,6 +3,7 @@ import type { Jsonify } from "type-fest";
 
 import type { GroupEntry } from "@/libs/models/groupEntry";
 import type { UserEntry } from "@/libs/models/userEntry";
+import type { SyncOutcome } from "@/libs/services/sync.service";
 
 const ipcBridge = {
   webUtils: {
@@ -58,7 +59,7 @@ const ipcBridge = {
       ipcRenderer.invoke("secureStorageService", { action: "remove", key }),
   },
   auth: {
-    logIn: (credentials: { clientId: string; clientSecret: string }): Promise<void> =>
+    logIn: (credentials: { apiToken: string; directoryId?: number }): Promise<void> =>
       ipcRenderer.invoke("auth:login", credentials),
     logOut: (): Promise<void> => ipcRenderer.invoke("auth:logout"),
   },
@@ -66,7 +67,7 @@ const ipcBridge = {
     run: (
       force: boolean,
       test: boolean,
-    ): Promise<[Jsonify<GroupEntry>[] | null, Jsonify<UserEntry>[] | null]> =>
+    ): Promise<[Jsonify<GroupEntry>[] | null, Jsonify<UserEntry>[] | null, SyncOutcome | null]> =>
       ipcRenderer.invoke("sync:run", { force, test }),
   },
 };

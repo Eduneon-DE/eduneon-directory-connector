@@ -6,14 +6,11 @@ import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { APPLICATION_NAME } from "@/libs/constants";
 import { AppIdService } from "@/libs/services/appId.service";
 import { AuthService } from "@/libs/services/auth.service";
-import { BatchRequestBuilder } from "@/libs/services/batch-request-builder";
 import { DefaultDirectoryFactoryService } from "@/libs/services/directory-factory.service";
 import { applyServerOverride, SERVER_URL_ENV } from "@/libs/services/environment/server-override";
 import { I18nService } from "@/libs/services/i18n.service";
 import { NativeSecureStorageService } from "@/libs/services/nativeSecureStorage.service";
 import { NodeApiService } from "@/libs/services/nodeApi.service";
-import { NodeCryptoFunctionService } from "@/libs/services/nodeCryptoFunction.service";
-import { SingleRequestBuilder } from "@/libs/services/single-request-builder";
 import { DefaultStateService } from "@/libs/services/state-service/default-state.service";
 import { StateMigrationService } from "@/libs/services/state-service/stateMigration.service";
 import { SyncService } from "@/libs/services/sync.service";
@@ -105,7 +102,6 @@ export class Main {
     );
 
     const platformUtilsService = new MainPlatformUtilsService();
-    const cryptoFunctionService = new NodeCryptoFunctionService();
     const tokenService = new TokenService(secureStorageService);
     const appIdService = new AppIdService(this.storageService);
 
@@ -124,8 +120,6 @@ export class Main {
 
     const authService = new AuthService(
       apiService,
-      appIdService,
-      platformUtilsService,
       { send: (subscriber: string, arg: any = {}) => this.messagingService?.send(subscriber, arg) },
       this.stateService,
     );
@@ -137,13 +131,9 @@ export class Main {
     );
 
     const syncService = new SyncService(
-      cryptoFunctionService,
       apiService,
       { send: (subscriber: string, arg: any = {}) => this.messagingService?.send(subscriber, arg) },
-      this.i18nService,
       this.stateService,
-      new BatchRequestBuilder(),
-      new SingleRequestBuilder(),
       directoryFactory,
     );
 
@@ -171,7 +161,7 @@ export class Main {
 
     handle(
       "auth:login",
-      async (_event, credentials: { clientId: string; clientSecret: string }) => {
+      async (_event, credentials: { apiToken: string; directoryId?: number }) => {
         await authService.logIn(credentials);
       },
     );
@@ -182,7 +172,11 @@ export class Main {
 
     handle("sync:run", async (_event, { force, test }: { force: boolean; test: boolean }) => {
       const [groups, users] = await syncService.sync(force, test);
-      return [groups?.map((g) => g.toJSON()) ?? null, users?.map((u) => u.toJSON()) ?? null];
+      return [
+        groups?.map((g) => g.toJSON()) ?? null,
+        users?.map((u) => u.toJSON()) ?? null,
+        syncService.lastOutcome,
+      ];
     });
 
     this.windowMain = new WindowMain(

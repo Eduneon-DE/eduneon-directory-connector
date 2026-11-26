@@ -96,10 +96,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
     const result = await promise;
     const groupCount = result[0] != null ? result[0].length : 0;
     const userCount = result[1] != null ? result[1].length : 0;
+    // What Cockpit did with the upload is the news; the local counts only describe the preview.
+    const outcome = result[2];
     this.platformUtilsService.showToast(
-      "success",
-      null,
-      this.i18nService.t("syncCounts", groupCount.toString(), userCount.toString()),
+      outcome?.status === "awaiting-setup" ? "info" : "success",
+      outcome != null ? this.i18nService.t("syncingComplete") : null,
+      outcome?.message ??
+        this.i18nService.t("syncCounts", groupCount.toString(), userCount.toString()),
+      outcome != null ? { timeout: 15000 } : undefined,
     );
   }
 

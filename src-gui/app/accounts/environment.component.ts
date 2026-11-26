@@ -18,11 +18,7 @@ import { I18nPipe } from "@/src-gui/angular/pipes/i18n.pipe";
 export class EnvironmentComponent implements OnInit {
   onSaved = output();
 
-  identityUrl = signal("");
-  apiUrl = signal("");
-  webVaultUrl = signal("");
   baseUrl = signal("");
-  showCustom = signal(false);
 
   private platformUtilsService = inject(PlatformUtilsService);
   private environmentService = inject(EnvironmentService);
@@ -33,17 +29,15 @@ export class EnvironmentComponent implements OnInit {
     const urls = await this.stateService.getEnvironmentUrls();
 
     this.baseUrl.set(urls?.base || "");
-    this.webVaultUrl.set(urls?.webVault || "");
-    this.apiUrl.set(urls?.api || "");
-    this.identityUrl.set(urls?.identity || "");
   }
 
   async submit(): Promise<void> {
+    // Everything (API included) derives from the one server URL; empty means the Eduneon cloud.
     const urls: EnvironmentUrls = {
       base: this.baseUrl(),
-      api: this.apiUrl(),
-      identity: this.identityUrl(),
-      webVault: this.webVaultUrl(),
+      api: null,
+      identity: null,
+      webVault: null,
     };
 
     await this.environmentService.setUrls(urls);
@@ -51,15 +45,8 @@ export class EnvironmentComponent implements OnInit {
     // Reload from state to get normalized URLs (with https:// prefix, etc.)
     const normalizedUrls = await this.stateService.getEnvironmentUrls();
     this.baseUrl.set(normalizedUrls?.base || "");
-    this.apiUrl.set(normalizedUrls?.api || "");
-    this.identityUrl.set(normalizedUrls?.identity || "");
-    this.webVaultUrl.set(normalizedUrls?.webVault || "");
 
     this.platformUtilsService.showToast("success", null, this.i18nService.t("environmentSaved"));
     this.onSaved.emit();
-  }
-
-  toggleCustom(): void {
-    this.showCustom.update((v) => !v);
   }
 }

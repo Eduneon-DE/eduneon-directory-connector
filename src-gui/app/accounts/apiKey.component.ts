@@ -12,11 +12,10 @@ import { FormsModule } from "@angular/forms";
 import { Router } from "@angular/router";
 import { takeUntil } from "rxjs";
 
+import { EnvironmentService } from "@/libs/abstractions/environment.service";
 import { I18nService } from "@/libs/abstractions/i18n.service";
 import { LogService } from "@/libs/abstractions/log.service";
 import { PlatformUtilsService } from "@/libs/abstractions/platformUtils.service";
-import { StateService } from "@/libs/abstractions/state.service";
-import { Utils } from "@/libs/utils/utils";
 
 import { A11yTitleDirective } from "@/src-gui/angular/directives/a11y-title.directive";
 import { ApiActionDirective } from "@/src-gui/angular/directives/api-action.directive";
@@ -43,8 +42,8 @@ export class ApiKeyComponent {
   @ViewChild("environment", { read: ViewContainerRef, static: true })
   environmentModal: ViewContainerRef;
 
-  clientId = signal("");
-  clientSecret = signal("");
+  apiToken = signal("");
+  directoryId = signal("");
   formPromise = signal<Promise<any>>(null);
   showSecret = signal(false);
 
@@ -56,53 +55,32 @@ export class ApiKeyComponent {
   private platformUtilsService = inject(PlatformUtilsService);
   private modalService = inject(ModalService);
   private logService = inject(LogService);
-  private stateService = inject(StateService);
+  private environmentService = inject(EnvironmentService);
+
+  /** Cockpit's page for API tokens, on the server this connector logs in to. */
+  tokenPageUrl() {
+    return this.environmentService.getWebVaultUrl().replace(/\/+$/, "") + "/platform/service-accounts";
+  }
 
   async submit() {
-    const clientId = this.clientId();
-    const clientSecret = this.clientSecret();
-
-    if (clientId == null || clientId === "") {
+    const apiToken = this.apiToken().trim();
+    if (apiToken === "") {
       this.platformUtilsService.showToast(
         "error",
         this.i18nService.t("errorOccurred"),
-        this.i18nService.t("clientIdRequired"),
-      );
-      return;
-    }
-    if (!clientId.startsWith("organization")) {
-      this.platformUtilsService.showToast(
-        "error",
-        this.i18nService.t("errorOccurred"),
-        this.i18nService.t("orgApiKeyRequired"),
-      );
-      return;
-    }
-    if (clientSecret == null || clientSecret === "") {
-      this.platformUtilsService.showToast(
-        "error",
-        this.i18nService.t("errorOccurred"),
-        this.i18nService.t("clientSecretRequired"),
-      );
-      return;
-    }
-    const idParts = clientId.split(".");
-
-    if (idParts.length !== 2 || idParts[0] !== "organization" || !Utils.isGuid(idParts[1])) {
-      this.platformUtilsService.showToast(
-        "error",
-        this.i18nService.t("errorOccurred"),
-        this.i18nService.t("invalidClientId"),
+        this.i18nService.t("apiTokenRequired"),
       );
       return;
     }
 
     try {
-      const promise = this.authService.logIn({ clientId, clientSecret });
+      const rawDirectoryId = this.directoryId().trim();
+      const promise = this.authService.logIn({
+        apiToken,
+        directoryId: rawDirectoryId === "" ? undefined : Number(rawDirectoryId),
+      });
       this.formPromise.set(promise);
       await promise;
-      const organizationId = await this.stateService.getEntityId();
-      await this.stateService.setOrganizationId(organizationId);
       this.router.navigate([this.successRoute]);
     } catch (e) {
       this.logService.error(e);
@@ -124,6 +102,6 @@ export class ApiKeyComponent {
 
   toggleSecret() {
     this.showSecret.update((v) => !v);
-    document.getElementById("client_secret").focus();
+    document.getElementById("api_token").focus();
   }
 }
