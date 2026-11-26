@@ -336,6 +336,8 @@ jobs:
         # electron-updater reads one latest-mac.yml listing both architectures.
         run: |
           cd out
+          # The install tests' screenshots are for the run, not for users.
+          rm -f screenshot-*.png
           {
             head -n 2 latest-mac-macos-x64.yml           # version + "files:"
             sed -n '/^files:/,/^path:/{/^files:/d;/^path:/d;p}' latest-mac-macos-x64.yml
