@@ -52,3 +52,7 @@ junit.xml*
 
 # Local test settings from `npm run local`
 .local/
+
+# Throwaway TLS certs for the test directory (utils/openldap/mkcert.sh)
+utils/openldap/certs/
+dist-cli/
