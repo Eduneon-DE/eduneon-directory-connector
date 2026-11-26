@@ -66,6 +66,13 @@ if (!existsSync(join(root, "node_modules", ".bin"))) {
   run("npm", ["ci"], { env: { ...process.env, HUSKY: "0" } });
 }
 
+// Electron downloads its runtime in a postinstall step; when that was skipped (install with
+// --ignore-scripts, an interrupted download) the app cannot start, so fetch it now.
+if (!existsSync(join(root, "node_modules", "electron", "path.txt"))) {
+  step("Downloading the Electron runtime");
+  run("node", [join("node_modules", "electron", "install.js")]);
+}
+
 // 3. Native module.
 if (!nativeBuilt) {
   step("Building the native keychain module (first run only)");

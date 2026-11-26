@@ -14,15 +14,15 @@ export declare namespace passwords {
   export function deletePassword(service: string, account: string): Promise<void>
   /**
    * Fetch the stored password from the keychain. On Windows this reads both the versioned UTF-8
-   * format this version writes and the older UTF-16 format written by desktop_core and keytar.
+   * format this version writes and the older UTF-16 format written by desktop_core.
    * Throws an Error with message PASSWORD_NOT_FOUND if the password does not exist.
    */
   export function getPassword(service: string, account: string): Promise<string>
   /** Check if OS secure storage is available. */
   export function isAvailable(): Promise<boolean>
   /**
-   * Migrate a credential that was stored by keytar (UTF-8 blob) to the new UTF-16 format
-   * used by desktop_core on Windows. No-ops on non-Windows platforms.
+   * Migrate a credential that was stored by keytar (UTF-8 blob) to the versioned V1 format
+   * written by `windows::set_password` on Windows. No-ops on non-Windows platforms.
    *
    * Returns `{ migrated: true }` if a migration was performed.
    * Returns `{ migrated: false }` if the credential does not exist or is already in the correct
