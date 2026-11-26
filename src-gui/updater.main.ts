@@ -143,7 +143,9 @@ export class UpdaterMain {
       autoUpdater.autoDownload = false;
     }
 
-    await autoUpdater.checkForUpdates();
+    // A failed check (offline, no release published yet) is reported through the "error" event
+    // above; the rejected promise must not surface as an unhandled rejection besides.
+    await autoUpdater.checkForUpdates().catch((): null => null);
   }
 
   private reset() {
