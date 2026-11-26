@@ -5,7 +5,10 @@ name: Release
 #
 # Signing is optional and switches on when the secrets exist:
 #   macOS:   MAC_CERT_P12_BASE64, MAC_CERT_PASSWORD, APPLE_ID_USERNAME, APPLE_ID_PASSWORD, APPLE_TEAM_ID
-#   Windows: SIGNING_VAULT_URL, SIGNING_ACCESS_TOKEN, SIGNING_CERT_NAME (Azure Key Vault via AzureSignTool)
+#   Windows: Azure Artifact Signing (account eduneon-signing, North Europe), on release tags only:
+#            repository variable AZURE_SIGNING_PROFILE (the certificate profile name) and secrets
+#            AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID. The login is OIDC (no password):
+#            the Entra app needs a federated credential for this repository's environment "release".
 # Without them the builds are unsigned: they install, but macOS Gatekeeper and Windows
 # SmartScreen show a warning on first launch.
 
@@ -64,8 +67,13 @@ jobs:
             os: macos-15
             dist: dist:mac:arm64
     runs-on: ${{ matrix.os }}
+    # Signing logs in to Azure with GitHub's OIDC token, bound to the "release" environment.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
+    permissions:
+      contents: read
+      id-token: write
     env:
-      HAS_WIN_SIGNING: ${{ secrets.SIGNING_VAULT_URL != '' }}
+      WIN_SIGNING: ${{ vars.AZURE_SIGNING_PROFILE != '' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -86,9 +94,18 @@ jobs:
 
       - run: npm ci
 
-      - name: Install AzureSignTool
-        if: runner.os == 'Windows' && env.HAS_WIN_SIGNING == 'true'
-        run: dotnet tool install --global AzureSignTool --version 4.0.1
+      - name: Log in to Azure for code signing
+        if: runner.os == 'Windows' && env.WIN_SIGNING == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install the Artifact Signing module
+        if: runner.os == 'Windows' && env.WIN_SIGNING == 'true'
+        shell: pwsh
+        run: Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery -Scope CurrentUser
 
       - name: Build and package
         shell: bash
@@ -109,11 +126,19 @@ jobs:
           APPLE_ID_USERNAME: ${{ secrets.APPLE_ID_USERNAME }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows signing via scripts/sign.mjs
-          ELECTRON_BUILDER_SIGN: ${{ secrets.SIGNING_VAULT_URL != '' && '1' || '0' }}
-          SIGNING_VAULT_URL: ${{ secrets.SIGNING_VAULT_URL }}
-          SIGNING_ACCESS_TOKEN: ${{ secrets.SIGNING_ACCESS_TOKEN }}
-          SIGNING_CERT_NAME: ${{ secrets.SIGNING_CERT_NAME }}
+          # Windows signing via scripts/sign.mjs: empty profile = unsigned build.
+          AZURE_SIGNING_PROFILE: ${{ env.WIN_SIGNING == 'true' && vars.AZURE_SIGNING_PROFILE || '' }}
+          AZURE_SIGNING_ENDPOINT: https://neu.codesigning.azure.net/
+          AZURE_SIGNING_ACCOUNT: eduneon-signing
+
+      - name: Check the Windows signatures
+        if: runner.os == 'Windows' && env.WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem dist -Filter *.exe | ForEach-Object { Get-AuthenticodeSignature $_.FullName } |
+            Where-Object { $_.Status -ne 'Valid' }
+          if ($bad) { $bad | Format-Table Path, Status, StatusMessage -AutoSize; throw 'Unsigned or invalid installer' }
+          Get-ChildItem dist -Filter *.exe | ForEach-Object { "$($_.Name): $((Get-AuthenticodeSignature $_.FullName).SignerCertificate.Subject)" }
 
       - name: Keep per-arch macOS update manifest apart
         if: runner.os == 'macOS'
@@ -150,6 +175,12 @@ jobs:
             dist: dist:cli:mac:arm64
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      WIN_SIGNING: ${{ vars.AZURE_SIGNING_PROFILE != '' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -175,6 +206,35 @@ jobs:
       - run: npm ci
       - run: npm run build:native:release
       - run: npm run ${{ matrix.dist }}
+
+      - name: Log in to Azure for code signing
+        if: runner.os == 'Windows' && env.WIN_SIGNING == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign eduneon-dc.exe
+        if: runner.os == 'Windows' && env.WIN_SIGNING == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: https://neu.codesigning.azure.net/
+          signing-account-name: eduneon-signing
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist-cli\windows
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Check the CLI signature
+        if: runner.os == 'Windows' && env.WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature dist-cli\windows\eduneon-dc.exe
+          if ($sig.Status -ne 'Valid') { throw "eduneon-dc.exe: $($sig.Status) $($sig.StatusMessage)" }
+          $sig.SignerCertificate.Subject
 
       - name: Zip and check version
         shell: bash
