@@ -13,9 +13,11 @@ import { SyncConfiguration } from "../../models/syncConfiguration";
 import { UserEntry } from "../../models/userEntry";
 import { BaseDirectoryService } from "../baseDirectory.service";
 
-import { IDirectoryService } from "./directory.service";
+import { DirectorySnapshot, IDirectoryService } from "./directory.service";
+import { CloudSnapshotBuilder } from "./raw-entry";
 
 export class GSuiteDirectoryService extends BaseDirectoryService implements IDirectoryService {
+  private snapshot = new CloudSnapshotBuilder("google");
   private client: JWT;
   private service: admin_directory_v1.Admin;
   private authParams: any;
@@ -50,6 +52,7 @@ export class GSuiteDirectoryService extends BaseDirectoryService implements IDir
     }
 
     await this.auth();
+    this.snapshot.clear();
 
     let users: UserEntry[] = [];
     if (this.syncConfig.users) {
@@ -64,6 +67,10 @@ export class GSuiteDirectoryService extends BaseDirectoryService implements IDir
     }
 
     return [groups, users];
+  }
+
+  getSnapshot(): DirectorySnapshot {
+    return this.snapshot.build();
   }
 
   private async getUsers(): Promise<UserEntry[]> {
@@ -86,6 +93,9 @@ export class GSuiteDirectoryService extends BaseDirectoryService implements IDir
         for (const user of res.data.users) {
           if (this.filterOutResult(filter, user.primaryEmail)) {
             continue;
+          }
+          if (user.id != null) {
+            this.snapshot.addUser(user.id, user);
           }
           const entry = this.buildUser(user, false);
           if (entry != null) {
@@ -225,6 +235,12 @@ export class GSuiteDirectoryService extends BaseDirectoryService implements IDir
       }
     }
 
+    this.snapshot.addGroup(
+      group.id,
+      { id: group.id, name: group.name, email: group.email, description: group.description },
+      entry.userMemberExternalIds,
+      entry.groupMemberReferenceIds,
+    );
     return entry;
   }
 

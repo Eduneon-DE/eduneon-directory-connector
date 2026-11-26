@@ -16,12 +16,11 @@ import { DirectoryType } from "@/libs/enums/directoryType";
 import { EntraIdConfiguration } from "@/libs/models/entraIdConfiguration";
 import { SyncConfiguration } from "@/libs/models/syncConfiguration";
 
-import { EntraIdDirectoryService } from "./entra-id-directory.service";
+import { EntraIdDirectoryService, UserSelectParams } from "./entra-id-directory.service";
 
 // Mirrors the constant used inside the service. If either the constant or
 // the Graph URL template shifts, these tests will fail loudly rather than
 // silently miss the mocked response.
-const UserSelectParams = "?$select=id,mail,userPrincipalName,displayName,accountEnabled";
 
 function makeUser(id: string, mail: string) {
   return {

@@ -15,7 +15,8 @@ import { SyncConfiguration } from "../../models/syncConfiguration";
 import { UserEntry } from "../../models/userEntry";
 import { BaseDirectoryService } from "../baseDirectory.service";
 
-import { IDirectoryService } from "./directory.service";
+import { DirectorySnapshot, IDirectoryService } from "./directory.service";
+import { CloudSnapshotBuilder } from "./raw-entry";
 
 const EntraIdPublicIdentityAuthority = "login.microsoftonline.com";
 const EntraIdPublicGraphEndpoint = "https://graph.microsoft.com";
@@ -25,7 +26,12 @@ const EntraIdGovernmentGraphEndpoint = "https://graph.microsoft.us";
 const NextLink = "@odata.nextLink";
 const DeltaLink = "@odata.deltaLink";
 const ObjectType = "@odata.type";
-const UserSelectParams = "?$select=id,mail,userPrincipalName,displayName,accountEnabled";
+// The first five drive the user list; the rest are sent to Cockpit for its mappings.
+export const UserSelectParams =
+  "?$select=id,mail,userPrincipalName,displayName,accountEnabled," +
+  "givenName,surname,mailNickname,jobTitle,department,companyName,officeLocation,employeeId," +
+  "employeeType,userType,otherMails,onPremisesSamAccountName,onPremisesImmutableId," +
+  "onPremisesDistinguishedName,createdDateTime";
 
 enum UserSetType {
   IncludeUser,
@@ -40,6 +46,7 @@ export class EntraIdDirectoryService extends BaseDirectoryService implements IDi
   private syncConfig: SyncConfiguration;
   private accessToken: string;
   private accessTokenExpiration: Date;
+  private snapshot = new CloudSnapshotBuilder("entra");
 
   constructor(
     private logService: LogService,
@@ -67,6 +74,7 @@ export class EntraIdDirectoryService extends BaseDirectoryService implements IDi
     if (this.syncConfig == null) {
       return;
     }
+    this.snapshot.clear();
 
     let users: UserEntry[];
     if (this.syncConfig.users) {
@@ -83,6 +91,10 @@ export class EntraIdDirectoryService extends BaseDirectoryService implements IDi
     }
 
     return [groups, users];
+  }
+
+  getSnapshot(): DirectorySnapshot {
+    return this.snapshot.build();
   }
 
   private async getCurrentUsers(): Promise<UserEntry[]> {
@@ -485,6 +497,8 @@ export class EntraIdDirectoryService extends BaseDirectoryService implements IDi
       ) {
         continue;
       }
+      // Cockpit gets every user, including those without a usable email (e.g. students).
+      this.snapshot.addUser(user.id, user);
       if (!this.isInvalidUser(entry)) {
         entries.push(entry);
         entryIds.add(user.id);
@@ -525,6 +539,18 @@ export class EntraIdDirectoryService extends BaseDirectoryService implements IDi
       }
     }
 
+    this.snapshot.addGroup(
+      group.id,
+      {
+        id: group.id,
+        displayName: group.displayName,
+        mail: group.mail,
+        description: group.description,
+        mailNickname: group.mailNickname,
+      },
+      entry.userMemberExternalIds,
+      entry.groupMemberReferenceIds,
+    );
     return entry;
   }
 
