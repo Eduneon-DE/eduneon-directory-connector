@@ -14,7 +14,8 @@ import { LdapConfiguration } from "../../models/ldapConfiguration";
 import { SyncConfiguration } from "../../models/syncConfiguration";
 import { UserEntry } from "../../models/userEntry";
 
-import { IDirectoryService } from "./directory.service";
+import { DirectorySnapshot, IDirectoryService } from "./directory.service";
+import { fromLdapEntry } from "./raw-entry";
 
 const UserControlAccountDisabled = 2;
 
@@ -22,6 +23,15 @@ const UserControlAccountDisabled = 2;
  * The attribute name for the unique identifier used by Active Directory.
  */
 const ActiveDirectoryExternalId = "objectGUID";
+
+/** Binary attributes, read as bytes and sent to Cockpit as base64. */
+const BinaryAttributes = [ActiveDirectoryExternalId, "objectSid"];
+
+/**
+ * Attributes requested on every search: all user attributes, plus the operational ones Cockpit's
+ * mappings commonly use (OpenLDAP keeps memberOf and entryUUID operational; AD returns them anyway).
+ */
+const RequestedAttributes = ["*", "memberOf", "entryUUID", "modifyTimestamp", "createTimestamp"];
 
 /**
  * ldapts defaults a search's server-side time limit to 10 seconds, which the server enforces
@@ -83,6 +93,85 @@ export class LdapDirectoryService implements IDirectoryService {
 
     await this.client.unbind();
     return [groups, users];
+  }
+
+  async readSnapshot(): Promise<DirectorySnapshot> {
+    this.dirConfig = await this.stateService.getDirectory<LdapConfiguration>(DirectoryType.Ldap);
+    if (this.dirConfig == null) {
+      throw new Error(this.i18nService.t("dirConfigIncomplete"));
+    }
+    const baseDn = this.dirConfig.rootPath?.trim() ?? "";
+    if (baseDn === "") {
+      throw new Error("Set the root path (base DN) of the directory before syncing.");
+    }
+
+    await this.bind();
+    try {
+      const objectClasses = await this.readObjectClasses();
+      this.logService.info("Directory snapshot search: " + baseDn + " => (objectClass=*)");
+      const searchEntries = await this.searchAll(baseDn);
+      return { baseDn, objectClasses, entries: searchEntries.map((e) => fromLdapEntry(e)) };
+    } finally {
+      await this.client.unbind();
+    }
+  }
+
+  /**
+   * Everything under the base DN. Paged, because servers cap unpaged results (Active Directory at
+   * 1000, OpenLDAP's default size limit at 500); a server without the paging control is read unpaged.
+   */
+  private async searchAll(baseDn: string): Promise<ldapts.Entry[]> {
+    const options: ldapts.SearchOptions = {
+      filter: "(objectClass=*)",
+      scope: "sub",
+      timeLimit: LdapSearchTimeLimitSeconds,
+      explicitBufferAttributes: BinaryAttributes,
+      attributes: RequestedAttributes,
+    };
+    try {
+      const { searchEntries } = await this.client.search(baseDn, {
+        ...options,
+        paged: { pageSize: 500 },
+      });
+      return searchEntries;
+    } catch (e) {
+      if (!(e instanceof ldapts.UnavailableCriticalExtensionError)) {
+        throw e;
+      }
+      this.logService.warning("The directory does not support paged searches; reading unpaged.");
+      const { searchEntries } = await this.client.search(baseDn, options);
+      return searchEntries;
+    }
+  }
+
+  /**
+   * The directory's published objectClass definitions, from the schema entry its RootDSE names.
+   * Cockpit uses them to tell what each entry is (its structural class) and to label each type.
+   * Best effort: without them Cockpit still groups entries, by their last objectClass.
+   */
+  private async readObjectClasses(): Promise<string[]> {
+    try {
+      const root = await this.client.search("", {
+        scope: "base",
+        filter: "(objectClass=*)",
+        attributes: ["subschemaSubentry"],
+      });
+      const schemaDn = [root.searchEntries[0]?.subschemaSubentry].flat()[0];
+      if (schemaDn == null || String(schemaDn) === "") {
+        return [];
+      }
+      const schema = await this.client.search(String(schemaDn), {
+        scope: "base",
+        filter: "(objectClass=*)",
+        attributes: ["objectClasses"],
+      });
+      return [schema.searchEntries[0]?.objectClasses ?? []].flat().map(String);
+    } catch (e) {
+      this.logService.warning(
+        "Could not read the directory schema: " + (e instanceof Error ? e.message : String(e)),
+      );
+      return [];
+    }
   }
 
   private async getUsers(force: boolean, test: boolean): Promise<UserEntry[]> {
@@ -419,7 +508,8 @@ export class LdapDirectoryService implements IDirectoryService {
       timeLimit: LdapSearchTimeLimitSeconds,
       // We need to expressly tell ldapts what attributes to return as Buffer objects,
       // otherwise they are returned as strings
-      explicitBufferAttributes: [ActiveDirectoryExternalId],
+      explicitBufferAttributes: BinaryAttributes,
+      attributes: RequestedAttributes,
     };
     const { searchEntries } = await this.client.search(path, options, controls);
     return searchEntries.map((e) => processEntry(e)).filter((e) => e != null);
