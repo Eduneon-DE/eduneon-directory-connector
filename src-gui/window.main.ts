@@ -1,7 +1,7 @@
 import * as path from "path";
 import * as url from "url";
 
-import { app, BrowserWindow, Rectangle, screen } from "electron";
+import { app, BrowserWindow, Rectangle, screen, shell } from "electron";
 
 import { LogService } from "@/libs/abstractions/log.service";
 import { StateService } from "@/libs/abstractions/state.service";
@@ -110,6 +110,14 @@ export class WindowMain {
     });
 
     // Enable SharedArrayBuffer. See https://developer.chrome.com/blog/enabling-shared-array-buffer/#cross-origin-isolation
+    // A link that opens a new window (target="_blank") goes to the system browser: the app only ever shows itself.
+    this.win.webContents.setWindowOpenHandler(({ url: target }) => {
+      if (/^https?:\/\//i.test(target)) {
+        void shell.openExternal(target);
+      }
+      return { action: "deny" };
+    });
+
     this.win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
       details.responseHeaders["Cross-Origin-Opener-Policy"] = ["same-origin"];
       details.responseHeaders["Cross-Origin-Embedder-Policy"] = ["require-corp"];
