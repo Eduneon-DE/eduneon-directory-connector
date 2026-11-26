@@ -8,7 +8,7 @@ import { GroupEntry } from "@/libs/models/groupEntry";
 import { SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { UserEntry } from "@/libs/models/userEntry";
 
-import { DirectorySnapshot } from "./directory-services/directory.service";
+import { DirectorySnapshot, IDirectoryService } from "./directory-services/directory.service";
 
 /** Entries per upload request; a few MB each, well under Cockpit's request limit. */
 export const UPLOAD_CHUNK_SIZE = 2000;
@@ -69,10 +69,7 @@ export class SyncService {
         return [groups, users];
       }
 
-      const snapshot = directoryService.readSnapshot
-        ? await directoryService.readSnapshot()
-        : (directoryService.getSnapshot?.() ??
-          SyncService.snapshotFromEntries(dirType, groups, users));
+      const snapshot = await SyncService.snapshotOf(directoryService, dirType, groups, users);
       if (snapshot.entries.length === 0) {
         throw new Error(
           "The directory returned no entries, so nothing was sent to Cockpit. " +
@@ -169,6 +166,52 @@ export class SyncService {
         return `${m.targetModel}: ${parts.join(", ")}`;
       })
       .join("\n");
+  }
+
+  /**
+   * What a sync would upload, read the same way, without sending anything: the number of entries per
+   * object class. For `eduneon-dc test`, so an admin sees what Cockpit will get before the first sync.
+   */
+  async preview(): Promise<{
+    baseDn: string;
+    total: number;
+    byClass: Array<{ objectClass: string; count: number }>;
+  }> {
+    const dirType = await this.stateService.getDirectoryType();
+    if (dirType == null) {
+      throw new Error("No directory configured. Run: eduneon-dc config directory ldap");
+    }
+    const directoryService = this.directoryFactory.createService(dirType);
+    if (directoryService == null) {
+      throw new Error("Cannot load directory service.");
+    }
+    const [groups, users] = await directoryService.getEntries(true, true);
+    const snapshot = await SyncService.snapshotOf(directoryService, dirType, groups, users);
+    const counts = new Map<string, number>();
+    for (const entry of snapshot.entries) {
+      const classes = (entry.attributes.objectclass ?? []).filter((c) => c.toLowerCase() !== "top");
+      const objectClass = classes[classes.length - 1] ?? "(none)";
+      counts.set(objectClass, (counts.get(objectClass) ?? 0) + 1);
+    }
+    return {
+      baseDn: snapshot.baseDn,
+      total: snapshot.entries.length,
+      byClass: [...counts.entries()]
+        .map(([objectClass, count]) => ({ objectClass, count }))
+        .sort((a, b) => b.count - a.count),
+    };
+  }
+
+  private static async snapshotOf(
+    directoryService: IDirectoryService,
+    dirType: DirectoryType,
+    groups: GroupEntry[],
+    users: UserEntry[],
+  ): Promise<DirectorySnapshot> {
+    return directoryService.readSnapshot
+      ? await directoryService.readSnapshot()
+      : (directoryService.getSnapshot?.() ??
+          SyncService.snapshotFromEntries(dirType, groups, users));
   }
 
   /**
