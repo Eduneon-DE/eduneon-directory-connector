@@ -1,185 +1,98 @@
 import { mock, MockProxy } from "jest-mock-extended";
 
 import { ApiService } from "@/libs/abstractions/api.service";
-import { CryptoFunctionService } from "@/libs/abstractions/cryptoFunction.service";
 import { DirectoryFactoryService } from "@/libs/abstractions/directory-factory.service";
 import { I18nService } from "@/libs/abstractions/i18n.service";
 import { LogService } from "@/libs/abstractions/log.service";
 import { MessagingService } from "@/libs/abstractions/messaging.service";
 import { StateService } from "@/libs/abstractions/state.service";
 import { DirectoryType } from "@/libs/enums/directoryType";
+import { DirectorySyncRequest } from "@/libs/models/cockpit";
 
-import { BatchRequestBuilder } from "./batch-request-builder";
 import { LdapDirectoryService } from "./directory-services/ldap-directory.service";
-import { SingleRequestBuilder } from "./single-request-builder";
 import { SyncService } from "./sync.service";
-import * as constants from "./sync.service";
 
 import { getLdapConfiguration, getSyncConfiguration } from "@/utils/openldap/config-fixtures";
 import { groupFixtures } from "@/utils/openldap/group-fixtures";
 import { userFixtures } from "@/utils/openldap/user-fixtures";
 
-describe("SyncService", () => {
-  let logService: MockProxy<LogService>;
-  let i18nService: MockProxy<I18nService>;
+// Needs the test directory: `docker compose up -d` (see docker-compose.yml).
+describe("SyncService against OpenLDAP", () => {
   let stateService: MockProxy<StateService>;
-  let cryptoFunctionService: MockProxy<CryptoFunctionService>;
   let apiService: MockProxy<ApiService>;
-  let messagingService: MockProxy<MessagingService>;
-  let directoryFactory: MockProxy<DirectoryFactoryService>;
-
-  let batchRequestBuilder: BatchRequestBuilder;
-  let singleRequestBuilder: SingleRequestBuilder;
   let syncService: SyncService;
-  let directoryService: LdapDirectoryService;
-
-  const originalBatchSize = constants.batchSize;
 
   beforeEach(() => {
-    logService = mock();
-    i18nService = mock();
     stateService = mock();
-    cryptoFunctionService = mock();
     apiService = mock();
-    messagingService = mock();
-    directoryFactory = mock();
+    const directoryFactory = mock<DirectoryFactoryService>();
 
-    stateService.getApiUrl.mockResolvedValue("https://app.eduneon.com/api");
     stateService.getDirectoryType.mockResolvedValue(DirectoryType.Ldap);
-    stateService.getOrganizationId.mockResolvedValue("fakeId");
+    stateService.getOrganizationId.mockResolvedValue("7");
+    stateService.getDirectory
+      .calledWith(DirectoryType.Ldap)
+      .mockResolvedValue(getLdapConfiguration());
+    stateService.getSync.mockResolvedValue(getSyncConfiguration({ users: true, groups: true }));
+    apiService.postDirectorySync.mockResolvedValue({
+      provider: { id: 7, name: "Test" },
+      status: "synced",
+      uploadId: "u",
+      dryRun: false,
+      received: 0,
+      mappings: [],
+      issues: [],
+    });
 
-    directoryService = new LdapDirectoryService(logService, i18nService, stateService);
-    directoryFactory.createService.mockReturnValue(directoryService);
-
-    batchRequestBuilder = new BatchRequestBuilder();
-    singleRequestBuilder = new SingleRequestBuilder();
-
+    directoryFactory.createService.mockReturnValue(
+      new LdapDirectoryService(mock<LogService>(), mock<I18nService>(), stateService),
+    );
     syncService = new SyncService(
-      cryptoFunctionService,
       apiService,
-      messagingService,
-      i18nService,
+      mock<MessagingService>(),
       stateService,
-      batchRequestBuilder,
-      singleRequestBuilder,
       directoryFactory,
     );
   });
 
-  describe("OpenLdap integration: ", () => {
-    it("with largeImport disabled matches directory fixture data", async () => {
-      stateService.getDirectory
-        .calledWith(DirectoryType.Ldap)
-        .mockResolvedValue(getLdapConfiguration());
-      stateService.getSync.mockResolvedValue(
-        getSyncConfiguration({
-          users: true,
-          groups: true,
-          largeImport: false,
-          overwriteExisting: false,
-        }),
-      );
+  it("returns the directory's users and groups", async () => {
+    await expect(syncService.sync(false, false)).resolves.toEqual([groupFixtures, userFixtures]);
+  });
 
-      cryptoFunctionService.hash.mockResolvedValue(new ArrayBuffer(1));
-      // This arranges the last hash to be differet from the ArrayBuffer after it is converted to b64
-      stateService.getLastSyncHash.mockResolvedValue("unique hash");
+  it("sends every user and group to Cockpit once, as raw entries", async () => {
+    await syncService.sync(false, false);
 
-      const syncResult = await syncService.sync(false, false);
+    expect(apiService.postDirectorySync).toHaveBeenCalledTimes(1);
+    const request: DirectorySyncRequest = apiService.postDirectorySync.mock.calls[0][0];
+    expect(request).toMatchObject({ providerId: 7, dryRun: false, baseDn: "dc=example,dc=com" });
 
-      expect(syncResult).toEqual([groupFixtures, userFixtures]);
+    const dns = request.entries.map((e) => e.dn.toLowerCase());
+    for (const u of userFixtures) {
+      expect(dns).toContain(u.referenceId.toLowerCase());
+    }
+    for (const g of groupFixtures) {
+      expect(dns).toContain(g.referenceId.toLowerCase());
+    }
 
-      expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(
-        expect.objectContaining({ overwriteExisting: false }),
-      );
-      expect(apiService.postPublicImportDirectory).toHaveBeenCalledTimes(1);
+    const roland = request.entries.find((e) => e.dn.startsWith("cn=Roland Dyke"));
+    expect(roland.attributes).toMatchObject({
+      cn: ["Roland Dyke"],
+      mail: ["DykeR@220af87272f04218bb8dd81d50fb19f5.example.com"],
+      objectclass: expect.arrayContaining(["inetOrgPerson"]),
+      entryuuid: [expect.any(String)],
     });
+  });
 
-    it("with largeImport enabled matches directory fixture data", async () => {
-      stateService.getDirectory
-        .calledWith(DirectoryType.Ldap)
-        .mockResolvedValue(getLdapConfiguration());
-      stateService.getSync.mockResolvedValue(
-        getSyncConfiguration({
-          users: true,
-          groups: true,
-          largeImport: true,
-          overwriteExisting: false,
-        }),
-      );
+  it("never sends password attributes", async () => {
+    await syncService.sync(false, false);
 
-      cryptoFunctionService.hash.mockResolvedValue(new ArrayBuffer(1));
-      // This arranges the last hash to be differet from the ArrayBuffer after it is converted to b64
-      stateService.getLastSyncHash.mockResolvedValue("unique hash");
+    const request: DirectorySyncRequest = apiService.postDirectorySync.mock.calls[0][0];
+    for (const entry of request.entries) {
+      expect(Object.keys(entry.attributes)).not.toContain("userpassword");
+    }
+  });
 
-      // @ts-expect-error This is a workaround to make the batchsize smaller to trigger the batching logic since its a const.
-      // eslint-disable-next-line no-import-assign
-      constants.batchSize = 4;
-
-      const syncResult = await syncService.sync(false, false);
-
-      expect(syncResult).toEqual([groupFixtures, userFixtures]);
-      expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(
-        expect.objectContaining({ overwriteExisting: false }),
-      );
-
-      // The expected number of calls may change if more data is added to the ldif
-      // Make sure it equals (number of users / 4) + (number of groups / 4)
-      expect(apiService.postPublicImportDirectory).toHaveBeenCalledTimes(7);
-
-      // @ts-expect-error Reset batch size to original state.
-      // eslint-disable-next-line no-import-assign
-      constants.batchSize = originalBatchSize;
-    });
-
-    it("forwards inviteUsersAfterProvisioning into the import request when enabled", async () => {
-      stateService.getDirectory
-        .calledWith(DirectoryType.Ldap)
-        .mockResolvedValue(getLdapConfiguration());
-      stateService.getSync.mockResolvedValue(
-        getSyncConfiguration({
-          users: true,
-          groups: true,
-          largeImport: false,
-          overwriteExisting: false,
-          inviteUsersAfterProvisioning: true,
-        }),
-      );
-
-      cryptoFunctionService.hash.mockResolvedValue(new ArrayBuffer(1));
-      stateService.getLastSyncHash.mockResolvedValue("unique hash");
-
-      await syncService.sync(false, false);
-
-      expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(
-        expect.objectContaining({ inviteUsersAfterProvisioning: true }),
-      );
-    });
-
-    it("defaults inviteUsersAfterProvisioning to false when unset in configuration", async () => {
-      stateService.getDirectory
-        .calledWith(DirectoryType.Ldap)
-        .mockResolvedValue(getLdapConfiguration());
-      const syncConfig = getSyncConfiguration({
-        users: true,
-        groups: true,
-        largeImport: false,
-        overwriteExisting: false,
-      });
-      // A config that reaches the request builder without the flag falls back to false (the
-      // safe default). Real upgraded configs are backfilled to true by the v6->v7 state
-      // migration before they ever get here (see StateMigrationService.migrateStateFrom6To7).
-      delete (syncConfig as { inviteUsersAfterProvisioning?: boolean })
-        .inviteUsersAfterProvisioning;
-      stateService.getSync.mockResolvedValue(syncConfig);
-
-      cryptoFunctionService.hash.mockResolvedValue(new ArrayBuffer(1));
-      stateService.getLastSyncHash.mockResolvedValue("unique hash");
-
-      await syncService.sync(false, false);
-
-      expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(
-        expect.objectContaining({ inviteUsersAfterProvisioning: false }),
-      );
-    });
+  it("sends nothing in test mode", async () => {
+    await syncService.sync(false, true);
+    expect(apiService.postDirectorySync).not.toHaveBeenCalled();
   });
 });

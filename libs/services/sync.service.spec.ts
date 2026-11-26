@@ -1,351 +1,202 @@
 import { mock, MockProxy } from "jest-mock-extended";
 
-import { CryptoFunctionService } from "@/libs/abstractions/cryptoFunction.service";
+import { ApiService } from "@/libs/abstractions/api.service";
 import { DirectoryFactoryService } from "@/libs/abstractions/directory-factory.service";
 import { MessagingService } from "@/libs/abstractions/messaging.service";
 import { StateService } from "@/libs/abstractions/state.service";
 import { DirectoryType } from "@/libs/enums/directoryType";
-import { OrganizationImportRequest } from "@/libs/models/request/organizationImportRequest";
-import { ApiService } from "@/libs/services/api.service";
+import { DirectorySyncResponse } from "@/libs/models/cockpit";
 
 import { getSyncConfiguration } from "../../utils/openldap/config-fixtures";
 import { GroupEntry } from "../models/groupEntry";
 import { UserEntry } from "../models/userEntry";
 
-import { BatchRequestBuilder } from "./batch-request-builder";
-import { LdapDirectoryService } from "./directory-services/ldap-directory.service";
-import { I18nService } from "./i18n.service";
-import { SingleRequestBuilder } from "./single-request-builder";
-import { SyncService } from "./sync.service";
-import * as constants from "./sync.service";
+import { IDirectoryService } from "./directory-services/directory.service";
+import { SyncService, UPLOAD_CHUNK_SIZE } from "./sync.service";
 
-import { groupFixtures } from "@/utils/openldap/group-fixtures";
-import { userFixtures } from "@/utils/openldap/user-fixtures";
+const okResponse: DirectorySyncResponse = {
+  provider: { id: 7, name: "Test" },
+  status: "synced",
+  uploadId: "u",
+  dryRun: false,
+  received: 1,
+  mappings: [
+    {
+      targetModel: "AuthenticationAccount",
+      total: 1,
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      errors: 0,
+      conflicts: 0,
+      deprovisioned: 0,
+    },
+  ],
+  issues: [],
+};
+
+function user(id: string, email: string): UserEntry {
+  const u = new UserEntry();
+  u.referenceId = id;
+  u.externalId = id;
+  u.email = email;
+  return u;
+}
 
 describe("SyncService", () => {
-  let cryptoFunctionService: MockProxy<CryptoFunctionService>;
   let apiService: MockProxy<ApiService>;
   let messagingService: MockProxy<MessagingService>;
-  let i18nService: MockProxy<I18nService>;
   let stateService: MockProxy<StateService>;
-  let directoryFactory: MockProxy<DirectoryFactoryService>;
-  let batchRequestBuilder: MockProxy<BatchRequestBuilder>;
-  let singleRequestBuilder: MockProxy<SingleRequestBuilder>;
-
+  let directory: MockProxy<IDirectoryService>;
   let syncService: SyncService;
 
-  const originalBatchSize = constants.batchSize;
+  const alice = { dn: "uid=alice,dc=x", attributes: { uid: ["alice"] } };
 
   beforeEach(() => {
-    cryptoFunctionService = mock();
     apiService = mock();
     messagingService = mock();
-    i18nService = mock();
     stateService = mock();
-    directoryFactory = mock();
-    batchRequestBuilder = mock();
-    singleRequestBuilder = mock();
+    directory = mock<IDirectoryService>();
+    const directoryFactory = mock<DirectoryFactoryService>();
+    directoryFactory.createService.mockReturnValue(directory);
 
-    stateService.getApiUrl.mockResolvedValue("https://app.eduneon.com/api");
     stateService.getDirectoryType.mockResolvedValue(DirectoryType.Ldap);
-    stateService.getOrganizationId.mockResolvedValue("fakeId");
-    const mockDirectoryService = mock<LdapDirectoryService>();
-    mockDirectoryService.getEntries.mockResolvedValue([groupFixtures, userFixtures]);
-    directoryFactory.createService.mockReturnValue(mockDirectoryService);
+    stateService.getOrganizationId.mockResolvedValue("7");
+    stateService.getSync.mockResolvedValue(getSyncConfiguration({ users: true, groups: true }));
+    directory.getEntries.mockResolvedValue([[], [user("uid=alice,dc=x", "a@x")]]);
+    directory.readSnapshot.mockResolvedValue({
+      baseDn: "dc=x",
+      entries: [alice],
+      objectClasses: ["( 2.5.6.6 NAME 'person' STRUCTURAL )"],
+    });
+    apiService.postDirectorySync.mockResolvedValue(okResponse);
 
-    syncService = new SyncService(
-      cryptoFunctionService,
-      apiService,
-      messagingService,
-      i18nService,
-      stateService,
-      batchRequestBuilder,
-      singleRequestBuilder,
-      directoryFactory,
-    );
+    syncService = new SyncService(apiService, messagingService, stateService, directoryFactory);
   });
 
-  it("Sync posts single request successfully for unique hashes", async () => {
-    stateService.getSync.mockResolvedValue(getSyncConfiguration({ groups: true, users: true }));
-    cryptoFunctionService.hash.mockResolvedValue(new ArrayBuffer(1));
-    // This arranges the last hash to be differet from the ArrayBuffer after it is converted to b64
-    stateService.getLastSyncHash.mockResolvedValue("unique hash");
+  it("always reads the full directory and pushes the snapshot", async () => {
+    await syncService.sync(false, false);
 
-    const mockRequest: OrganizationImportRequest[] = [
+    expect(directory.getEntries).toHaveBeenCalledWith(true, false);
+    expect(apiService.postDirectorySync).toHaveBeenCalledWith({
+      providerId: 7,
+      dryRun: false,
+      baseDn: "dc=x",
+      uploadId: expect.any(String),
+      part: 0,
+      parts: 1,
+      entries: [alice],
+      objectClasses: ["( 2.5.6.6 NAME 'person' STRUCTURAL )"],
+    });
+    expect(stateService.setLastUserSync).toHaveBeenCalled();
+    expect(messagingService.send).toHaveBeenLastCalledWith("dirSyncCompleted", {
+      successfully: true,
+      summary: "AuthenticationAccount: 1 created, 0 updated, 0 unchanged",
+    });
+  });
+
+  it("does not push in test mode", async () => {
+    const result = await syncService.sync(false, true);
+
+    expect(result[1]).toHaveLength(1);
+    expect(apiService.postDirectorySync).not.toHaveBeenCalled();
+  });
+
+  it("refuses to push an empty directory", async () => {
+    directory.readSnapshot.mockResolvedValue({ baseDn: "dc=x", entries: [] });
+
+    await expect(syncService.sync(false, false)).rejects.toThrow("returned no entries");
+    expect(apiService.postDirectorySync).not.toHaveBeenCalled();
+  });
+
+  it("fails the sync when Cockpit reports errors, and restores the delta tokens", async () => {
+    stateService.getUserDelta.mockResolvedValue("delta-before");
+    apiService.postDirectorySync.mockResolvedValue({
+      ...okResponse,
+      issues: [{ targetModel: "", severity: "error", code: "x", message: "Mapping is broken" }],
+    });
+
+    await expect(syncService.sync(false, false)).rejects.toThrow("Mapping is broken");
+    expect(stateService.setUserDelta).toHaveBeenCalledWith("delta-before");
+    expect(stateService.setLastUserSync).not.toHaveBeenCalled();
+  });
+
+  it("uploads a large directory in parts under one upload id, the schema only once", async () => {
+    const entries = Array.from({ length: UPLOAD_CHUNK_SIZE * 2 + 1 }, (_, i) => ({
+      dn: `uid=u${i},dc=x`,
+      attributes: { uid: [`u${i}`] },
+    }));
+    directory.readSnapshot.mockResolvedValue({ baseDn: "dc=x", entries, objectClasses: ["oc"] });
+
+    await syncService.sync(false, false);
+
+    const calls = apiService.postDirectorySync.mock.calls.map(([req]) => req);
+    expect(calls.map((c) => [c.part, c.parts, c.entries.length])).toEqual([
+      [0, 3, UPLOAD_CHUNK_SIZE],
+      [1, 3, UPLOAD_CHUNK_SIZE],
+      [2, 3, 1],
+    ]);
+    expect(new Set(calls.map((c) => c.uploadId)).size).toBe(1);
+    expect(calls.map((c) => c.objectClasses)).toEqual([["oc"], undefined, undefined]);
+  });
+
+  it("reports an upload Cockpit keeps until the setup is finished there", async () => {
+    apiService.postDirectorySync.mockResolvedValue({
+      ...okResponse,
+      status: "awaiting-setup",
+      received: 434,
+      mappings: [],
+    });
+
+    await syncService.sync(false, false);
+
+    expect(syncService.lastOutcome).toMatchObject({ status: "awaiting-setup", received: 434 });
+    expect(syncService.lastOutcome.message).toContain("Finish the setup in Cockpit");
+  });
+
+  it("builds entries itself for directories without a raw snapshot", () => {
+    const g = new GroupEntry();
+    g.referenceId = "g1";
+    g.externalId = "g1";
+    g.name = "Teachers";
+    g.userMemberExternalIds.add("u1");
+
+    const snapshot = SyncService.snapshotFromEntries(DirectoryType.Okta, [g], [user("u1", "t@x")]);
+
+    expect(snapshot.entries).toEqual([
       {
-        members: [],
-        groups: [],
-        overwriteExisting: true,
-        largeImport: true,
-        inviteUsersAfterProvisioning: true,
+        dn: "uid=u1,ou=users,o=okta",
+        attributes: {
+          objectclass: ["user"],
+          id: ["u1"],
+          externalid: ["u1"],
+          mail: ["t@x"],
+          disabled: ["false"],
+          memberof: ["cn=g1,ou=groups,o=okta"],
+        },
       },
-    ];
-
-    singleRequestBuilder.buildRequest.mockReturnValue(mockRequest);
-
-    await syncService.sync(true, false);
-
-    expect(apiService.postPublicImportDirectory).toHaveBeenCalledTimes(1);
+      {
+        dn: "cn=g1,ou=groups,o=okta",
+        attributes: {
+          objectclass: ["group"],
+          id: ["g1"],
+          externalid: ["g1"],
+          name: ["Teachers"],
+          member: ["uid=u1,ou=users,o=okta"],
+        },
+      },
+    ]);
   });
+});
 
-  it("Sync posts multiple request successfully for unique hashes", async () => {
-    stateService.getSync.mockResolvedValue(
-      getSyncConfiguration({ groups: true, users: true, largeImport: true }),
+describe("SyncService.describe", () => {
+  it("names records that were deactivated or are waiting out the grace period", () => {
+    const summary = SyncService.describe({
+      ...okResponse,
+      mappings: [{ ...okResponse.mappings[0], updated: 3, deprovisioned: 1, pending: 2 }],
+    });
+    expect(summary).toContain(
+      "AuthenticationAccount: 1 created, 3 updated, 0 unchanged, 1 deactivated, 2 gone from the directory, kept for the grace period",
     );
-    cryptoFunctionService.hash.mockResolvedValue(new ArrayBuffer(1));
-    // This arranges the last hash to be differet from the ArrayBuffer after it is converted to b64
-    stateService.getLastSyncHash.mockResolvedValue("unique hash");
-
-    // @ts-expect-error This is a workaround to make the batchsize smaller to trigger the batching logic since its a const.
-    // eslint-disable-next-line no-import-assign
-    constants.batchSize = 4;
-
-    const mockRequests = new Array(6).fill({
-      members: [],
-      groups: [],
-      overwriteExisting: true,
-      largeImport: true,
-    });
-
-    batchRequestBuilder.buildRequest.mockReturnValue(mockRequests);
-
-    await syncService.sync(true, false);
-
-    expect(apiService.postPublicImportDirectory).toHaveBeenCalledTimes(6);
-    expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(mockRequests[0]);
-    expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(mockRequests[1]);
-    expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(mockRequests[2]);
-    expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(mockRequests[3]);
-    expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(mockRequests[4]);
-    expect(apiService.postPublicImportDirectory).toHaveBeenCalledWith(mockRequests[5]);
-
-    // @ts-expect-error Reset batch size back to original value.
-    // eslint-disable-next-line no-import-assign
-    constants.batchSize = originalBatchSize;
-  });
-
-  it("does not post for the same hash", async () => {
-    stateService.getSync.mockResolvedValue(getSyncConfiguration({ groups: true, users: true }));
-    cryptoFunctionService.hash.mockResolvedValue(new ArrayBuffer(1));
-    // This arranges the last hash to be the same as the ArrayBuffer after it is converted to b64
-    stateService.getLastSyncHash.mockResolvedValue("AA==");
-
-    await syncService.sync(true, false);
-
-    expect(apiService.postPublicImportDirectory).not.toHaveBeenCalled();
-  });
-
-  describe("nested and circular group handling", () => {
-    function createGroup(
-      name: string,
-      userExternalIds: string[] = [],
-      groupMemberReferenceIds: string[] = [],
-    ) {
-      return GroupEntry.fromJSON({
-        name,
-        referenceId: name,
-        externalId: name,
-        userMemberExternalIds: userExternalIds,
-        groupMemberReferenceIds: groupMemberReferenceIds,
-        users: [],
-      });
-    }
-
-    function setupSyncWithGroups(groups: GroupEntry[]) {
-      const mockDirectoryService = mock<LdapDirectoryService>();
-      mockDirectoryService.getEntries.mockResolvedValue([groups, []]);
-      directoryFactory.createService.mockReturnValue(mockDirectoryService);
-
-      stateService.getSync.mockResolvedValue(getSyncConfiguration({ groups: true, users: true }));
-      cryptoFunctionService.hash.mockResolvedValue(new ArrayBuffer(1));
-      stateService.getLastSyncHash.mockResolvedValue("unique hash");
-      singleRequestBuilder.buildRequest.mockReturnValue([
-        {
-          members: [],
-          groups: [],
-          overwriteExisting: true,
-          largeImport: false,
-          inviteUsersAfterProvisioning: true,
-        },
-      ]);
-    }
-
-    it("should handle simple circular reference (A ↔ B) without stack overflow", async () => {
-      const groupA = createGroup("GroupA", ["userA"], ["GroupB"]);
-      const groupB = createGroup("GroupB", ["userB"], ["GroupA"]);
-      setupSyncWithGroups([groupA, groupB]);
-
-      const [groups] = await syncService.sync(true, true);
-
-      const [a, b] = groups;
-      expect(a.userMemberExternalIds).toEqual(new Set(["userA", "userB"]));
-      expect(b.userMemberExternalIds).toEqual(new Set(["userA", "userB"]));
-    });
-
-    it("should handle longer circular chain (A → B → C → A) without stack overflow", async () => {
-      const groupA = createGroup("GroupA", ["userA"], ["GroupB"]);
-      const groupB = createGroup("GroupB", ["userB"], ["GroupC"]);
-      const groupC = createGroup("GroupC", ["userC"], ["GroupA"]);
-      setupSyncWithGroups([groupA, groupB, groupC]);
-
-      const [groups] = await syncService.sync(true, true);
-
-      const allUsers = new Set(["userA", "userB", "userC"]);
-      for (const group of groups) {
-        expect(group.userMemberExternalIds).toEqual(allUsers);
-      }
-    });
-
-    it("should handle diamond structure (A → [B, C] → D)", async () => {
-      const groupA = createGroup("GroupA", ["userA"], ["GroupB", "GroupC"]);
-      const groupB = createGroup("GroupB", ["userB"], ["GroupD"]);
-      const groupC = createGroup("GroupC", ["userC"], ["GroupD"]);
-      const groupD = createGroup("GroupD", ["userD"], []);
-      setupSyncWithGroups([groupA, groupB, groupC, groupD]);
-
-      const [groups] = await syncService.sync(true, true);
-
-      const [a, b, c, d] = groups;
-      expect(a.userMemberExternalIds).toEqual(new Set(["userA", "userB", "userC", "userD"]));
-      expect(b.userMemberExternalIds).toEqual(new Set(["userB", "userD"]));
-      expect(c.userMemberExternalIds).toEqual(new Set(["userC", "userD"]));
-      expect(d.userMemberExternalIds).toEqual(new Set(["userD"]));
-    });
-
-    it("should handle deep nesting with circular reference at leaf", async () => {
-      // Structure: A → B → C → D → B (cycle back to B)
-      const groupA = createGroup("GroupA", ["userA"], ["GroupB"]);
-      const groupB = createGroup("GroupB", ["userB"], ["GroupC"]);
-      const groupC = createGroup("GroupC", ["userC"], ["GroupD"]);
-      const groupD = createGroup("GroupD", ["userD"], ["GroupB"]);
-      setupSyncWithGroups([groupA, groupB, groupC, groupD]);
-
-      const [groups] = await syncService.sync(true, true);
-
-      const [a, b, c, d] = groups;
-      const cycleUsers = new Set(["userB", "userC", "userD"]);
-      expect(a.userMemberExternalIds).toEqual(new Set(["userA", ...cycleUsers]));
-      expect(b.userMemberExternalIds).toEqual(cycleUsers);
-      expect(c.userMemberExternalIds).toEqual(cycleUsers);
-      expect(d.userMemberExternalIds).toEqual(cycleUsers);
-    });
-
-    it("should handle complex structure with multiple cycles and shared members", async () => {
-      // Structure:
-      // A → [B, C]
-      // B → [D, E]
-      // C → [E, F]
-      // D → A (cycle)
-      // E → C (cycle)
-      // F → (leaf)
-      const groupA = createGroup("GroupA", ["userA"], ["GroupB", "GroupC"]);
-      const groupB = createGroup("GroupB", ["userB"], ["GroupD", "GroupE"]);
-      const groupC = createGroup("GroupC", ["userC"], ["GroupE", "GroupF"]);
-      const groupD = createGroup("GroupD", ["userD"], ["GroupA"]);
-      const groupE = createGroup("GroupE", ["userE"], ["GroupC"]);
-      const groupF = createGroup("GroupF", ["userF"], []);
-      setupSyncWithGroups([groupA, groupB, groupC, groupD, groupE, groupF]);
-
-      const [groups] = await syncService.sync(true, true);
-
-      const allUsers = new Set(["userA", "userB", "userC", "userD", "userE", "userF"]);
-      const a = groups.find((g) => g.name === "GroupA");
-      const b = groups.find((g) => g.name === "GroupB");
-      const c = groups.find((g) => g.name === "GroupC");
-      const d = groups.find((g) => g.name === "GroupD");
-      const e = groups.find((g) => g.name === "GroupE");
-      const f = groups.find((g) => g.name === "GroupF");
-
-      // A can reach all groups, so it gets all users
-      expect(a.userMemberExternalIds).toEqual(allUsers);
-      // B reaches D, E, and through cycles reaches everything
-      expect(b.userMemberExternalIds).toEqual(allUsers);
-      // C reaches E (which cycles back to C) and F
-      expect(c.userMemberExternalIds).toEqual(new Set(["userC", "userE", "userF"]));
-      // D cycles to A, which reaches everything
-      expect(d.userMemberExternalIds).toEqual(allUsers);
-      // E cycles to C, picking up C's descendants
-      expect(e.userMemberExternalIds).toEqual(new Set(["userC", "userE", "userF"]));
-      // F is a leaf
-      expect(f.userMemberExternalIds).toEqual(new Set(["userF"]));
-    });
-  });
-
-  describe("tombstone user handling", () => {
-    function createUser(
-      email: string,
-      options: { deleted?: boolean; disabled?: boolean; referenceId?: string } = {},
-    ): UserEntry {
-      return UserEntry.fromJSON({
-        referenceId: options.referenceId ?? email,
-        externalId: email,
-        email,
-        disabled: options.disabled ?? false,
-        deleted: options.deleted ?? false,
-      });
-    }
-
-    function setupSyncWithUsers(users: UserEntry[]) {
-      const mockDirectoryService = mock<LdapDirectoryService>();
-      mockDirectoryService.getEntries.mockResolvedValue([[], users]);
-      directoryFactory.createService.mockReturnValue(mockDirectoryService);
-
-      stateService.getSync.mockResolvedValue(getSyncConfiguration({ users: true }));
-      cryptoFunctionService.hash.mockResolvedValue(new ArrayBuffer(1));
-      stateService.getLastSyncHash.mockResolvedValue("unique hash");
-      singleRequestBuilder.buildRequest.mockReturnValue([
-        {
-          members: [],
-          groups: [],
-          overwriteExisting: true,
-          largeImport: false,
-          inviteUsersAfterProvisioning: true,
-        },
-      ]);
-    }
-
-    it("should not throw when an active user and their tombstone share a synthesized email", async () => {
-      const activeUser = createUser("nomail@fish.org", {
-        referenceId: "CN=no email,OU=pm19397,DC=example,DC=support",
-      });
-      const tombstoneUser = createUser("nomail@fish.org", {
-        referenceId: "CN=no email\\0ADEL:9f41f97b,CN=Deleted Objects,DC=example,DC=support",
-        deleted: true,
-        disabled: true,
-      });
-      setupSyncWithUsers([activeUser, tombstoneUser]);
-
-      await expect(syncService.sync(true, true)).resolves.toBeDefined();
-    });
-
-    it("should include the active user and exclude the tombstone when they share a synthesized email", async () => {
-      const activeUser = createUser("nomail@fish.org", {
-        referenceId: "CN=no email,OU=pm19397,DC=example,DC=support",
-      });
-      const tombstoneUser = createUser("nomail@fish.org", {
-        referenceId: "CN=no email\\0ADEL:9f41f97b,CN=Deleted Objects,DC=example,DC=support",
-        deleted: true,
-        disabled: true,
-      });
-      setupSyncWithUsers([activeUser, tombstoneUser]);
-
-      const [, users] = await syncService.sync(true, true);
-
-      expect(users).toContainEqual(activeUser);
-      expect(users).not.toContainEqual(tombstoneUser);
-    });
-
-    it("should still throw when two distinct active users share the same email", async () => {
-      i18nService.t.mockImplementation((key: string) => key);
-      const user1 = createUser("duplicate@fish.org", {
-        referenceId: "CN=user1,OU=pm19397,DC=example,DC=support",
-      });
-      const user2 = createUser("duplicate@fish.org", {
-        referenceId: "CN=user2,OU=pm19397,DC=example,DC=support",
-      });
-      setupSyncWithUsers([user1, user2]);
-
-      await expect(syncService.sync(true, true)).rejects.toThrow();
-    });
   });
 });
