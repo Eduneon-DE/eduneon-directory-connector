@@ -1,114 +1,113 @@
 /**
  * @jest-environment node
  *
- * ApiService constructs `Request` objects, which jsdom does not provide. The repo already uses
- * this docblock for tests that need Node's fetch globals (see sync.service.integration.spec.ts).
+ * ApiService constructs `Request` objects, which jsdom does not provide.
  */
 import { mock, MockProxy } from "jest-mock-extended";
 
-import { AppIdService } from "@/libs/abstractions/appId.service";
 import { PlatformUtilsService } from "@/libs/abstractions/platformUtils.service";
 import { StateService } from "@/libs/abstractions/state.service";
-import { TokenService } from "@/libs/abstractions/token.service";
-import { DeviceType } from "@/libs/enums/deviceType";
-import { OrganizationImportRequest } from "@/libs/models/request/organizationImportRequest";
+import { ErrorResponse } from "@/libs/models/response/errorResponse";
 import { ApiService } from "@/libs/services/api.service";
 
-/**
- * Captures the URL of every outbound request and returns a canned 200 so no network is touched.
- */
+/** Records every outbound request and answers with the queued response; no network is touched. */
 class TestApiService extends ApiService {
-  readonly requestedUrls: string[] = [];
+  readonly requests: Request[] = [];
+  next: () => Response = () => json(200, {});
 
   protected nativeFetch(request: Request): Promise<Response> {
-    this.requestedUrls.push(request.url);
-    return Promise.resolve(new Response("{}", { status: 200 }));
+    this.requests.push(request);
+    return Promise.resolve(this.next());
   }
 }
 
-function importRequest(): OrganizationImportRequest {
-  return new OrganizationImportRequest({
-    groups: [],
-    users: [],
-    overwriteExisting: false,
-    largeImport: false,
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
   });
 }
 
 describe("ApiService", () => {
-  let tokenService: MockProxy<TokenService>;
-  let platformUtilsService: MockProxy<PlatformUtilsService>;
   let stateService: MockProxy<StateService>;
-  let appIdService: MockProxy<AppIdService>;
+  let logout: jest.Mock;
   let sut: TestApiService;
 
   beforeEach(() => {
-    tokenService = mock<TokenService>();
-    platformUtilsService = mock<PlatformUtilsService>();
-    stateService = mock<StateService>();
-    appIdService = mock<AppIdService>();
-
-    tokenService.getToken.mockResolvedValue("access-token");
-    tokenService.tokenNeedsRefresh.mockResolvedValue(false);
-    platformUtilsService.getDevice.mockReturnValue(DeviceType.MacOsDesktop);
+    const platformUtilsService = mock<PlatformUtilsService>();
     platformUtilsService.getClientType.mockReturnValue("connector" as never);
-    platformUtilsService.getApplicationVersion.mockResolvedValue("2026.9.0");
-    stateService.getEnvironmentUrls.mockResolvedValue(null);
+    platformUtilsService.getApplicationVersion.mockResolvedValue("2026.11.0");
+    stateService = mock<StateService>();
+    stateService.getApiUrl.mockResolvedValue("http://localhost:5000/api");
+    stateService.getAccessToken.mockResolvedValue("stored-token");
+    logout = jest.fn().mockResolvedValue(undefined);
 
-    sut = new TestApiService(
-      tokenService,
-      platformUtilsService,
-      stateService,
-      appIdService,
-      jest.fn(),
-      "Eduneon_DC/test",
-    );
+    sut = new TestApiService(null, platformUtilsService, stateService, null, logout, "UA/1");
   });
 
-  /**
-   * Regression coverage for PM-43359. ApiService must resolve the server URL from StateService on
-   * every request instead of caching it. The main process previously held URLs loaded at startup,
-   * so a self-hosted server configured after launch was ignored and org credentials were posted
-   * to the default cloud endpoint — surfacing as "400 invalid_client" until the app restarted.
-   */
-  describe("server url resolution", () => {
-    it("uses the api url resolved at the time of each request", async () => {
-      stateService.getApiUrl.mockResolvedValue("https://first.example.com/api");
-      await sut.postPublicImportDirectory(importRequest());
+  it("checks a token with X-API-Key against the status endpoint", async () => {
+    sut.next = () =>
+      json(200, { provider: { id: 3, name: "School" }, syncStatus: null, lastSyncAt: null });
 
-      // The configured server changes while the process keeps running.
-      stateService.getApiUrl.mockResolvedValue("https://second.example.com/api");
-      await sut.postPublicImportDirectory(importRequest());
-
-      expect(sut.requestedUrls).toEqual([
-        "https://first.example.com/api/public/organization/import",
-        "https://second.example.com/api/public/organization/import",
-      ]);
+    await expect(sut.getConnectorStatus("new-token")).resolves.toMatchObject({
+      provider: { id: 3 },
     });
 
-    it("reads the api url from state on every request rather than caching it", async () => {
-      stateService.getApiUrl.mockResolvedValue("https://example.com/api");
+    const req = sut.requests[0];
+    expect(req.method).toBe("GET");
+    expect(req.url).toBe("http://localhost:5000/api/v1/directory-connector/status");
+    expect(req.headers.get("X-API-Key")).toBe("new-token");
+    expect(req.headers.get("Authorization")).toBeNull();
+  });
 
-      await sut.postPublicImportDirectory(importRequest());
-      await sut.postPublicImportDirectory(importRequest());
+  it("posts the snapshot as JSON with the stored token", async () => {
+    sut.next = () => json(200, { mappings: [], issues: [] });
 
-      expect(stateService.getApiUrl).toHaveBeenCalledTimes(2);
+    await sut.postDirectorySync({ dryRun: false, baseDn: "dc=x", entries: [] });
+
+    const req = sut.requests[0];
+    expect(req.method).toBe("POST");
+    expect(req.url).toBe("http://localhost:5000/api/v1/directory-connector/sync");
+    expect(req.headers.get("X-API-Key")).toBe("stored-token");
+    expect(req.headers.get("Content-Type")).toContain("application/json");
+    await expect(req.json()).resolves.toEqual({ dryRun: false, baseDn: "dc=x", entries: [] });
+  });
+
+  it("logs out when Cockpit rejects the stored token", async () => {
+    sut.next = () => json(401, { message: "Unauthorized" });
+
+    await expect(
+      sut.postDirectorySync({ dryRun: false, baseDn: "", entries: [] }),
+    ).rejects.toBeInstanceOf(ErrorResponse);
+    expect(logout).toHaveBeenCalledWith(true);
+  });
+
+  it("does not log out when a token typed at login is wrong", async () => {
+    sut.next = () => json(401, { message: "Unauthorized" });
+
+    await expect(sut.getConnectorStatus("typo")).rejects.toMatchObject({
+      message: expect.stringContaining("did not accept this API token"),
     });
+    expect(logout).not.toHaveBeenCalled();
+  });
 
-    it("uses the identity url resolved at the time of each token request", async () => {
-      stateService.getIdentityUrl.mockResolvedValue("https://first.example.com/identity");
-      tokenService.getRefreshToken.mockResolvedValue("refresh-token");
-      tokenService.getDecodedToken.mockResolvedValue({ client_id: "organization.abc" });
+  it("passes Cockpit's error message through", async () => {
+    sut.next = () =>
+      json(404, { statusCode: 404, message: "No Directory Connector directory is set up" });
 
-      await sut["doRefreshToken"]();
-
-      stateService.getIdentityUrl.mockResolvedValue("https://second.example.com/identity");
-      await sut["doRefreshToken"]();
-
-      expect(sut.requestedUrls).toEqual([
-        "https://first.example.com/identity/connect/token",
-        "https://second.example.com/identity/connect/token",
-      ]);
+    await expect(sut.getConnectorStatus("t")).rejects.toMatchObject({
+      statusCode: 404,
+      message: "No Directory Connector directory is set up",
     });
+  });
+
+  it("explains an unreachable server", async () => {
+    sut.next = () => {
+      throw new TypeError("fetch failed");
+    };
+
+    await expect(sut.getConnectorStatus("t")).rejects.toThrow(
+      "Could not reach Cockpit at http://localhost:5000/api: fetch failed",
+    );
   });
 });
