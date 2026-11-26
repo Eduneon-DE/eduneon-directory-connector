@@ -8,6 +8,7 @@ import {
 } from "@angular/core";
 
 import { BroadcasterService } from "@/libs/abstractions/broadcaster.service";
+import { EnvironmentService } from "@/libs/abstractions/environment.service";
 import { I18nService } from "@/libs/abstractions/i18n.service";
 import { MessagingService } from "@/libs/abstractions/messaging.service";
 import { PlatformUtilsService } from "@/libs/abstractions/platformUtils.service";
@@ -28,12 +29,17 @@ export class MoreComponent implements OnInit, OnDestroy {
   version = signal("");
   year = signal("");
   checkingForUpdate = signal(false);
+  /** Where this app syncs to: the Cockpit server and the directory there (name and id). */
+  serverUrl = signal("");
+  directoryName = signal<string>(null);
+  directoryId = signal<string>(null);
 
   private platformUtilsService = inject(PlatformUtilsService);
   private i18nService = inject(I18nService);
   private messagingService = inject(MessagingService);
   private broadcasterService = inject(BroadcasterService);
   private stateService = inject(StateService);
+  private environmentService = inject(EnvironmentService);
 
   async ngOnInit() {
     this.broadcasterService.subscribe(BroadcasterSubscriptionId, async (message: any) => {
@@ -51,6 +57,9 @@ export class MoreComponent implements OnInit, OnDestroy {
 
     this.year.set(new Date().getFullYear().toString());
     this.version.set(await this.platformUtilsService.getApplicationVersion());
+    this.serverUrl.set(this.environmentService.getWebVaultUrl());
+    this.directoryName.set(await this.stateService.getEntityId());
+    this.directoryId.set(await this.stateService.getOrganizationId());
   }
 
   ngOnDestroy() {

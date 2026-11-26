@@ -22,6 +22,6 @@ export class LdapConfiguration implements IConfiguration {
   currentUser = false;
   username: string;
   password: string;
-  ad = true;
+  ad = false;
   pagedSearch = true;
 }

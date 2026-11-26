@@ -28,7 +28,7 @@ describe("AuthService", () => {
 
     await authService.logIn({ apiToken: "  token-123 " });
 
-    expect(apiService.getConnectorStatus).toHaveBeenCalledWith("token-123", undefined);
+    expect(apiService.getConnectorStatus).toHaveBeenCalledWith("token-123", undefined, undefined);
     expect(stateService.setAccessToken).toHaveBeenCalledWith("token-123");
     expect(stateService.setEntityId).toHaveBeenCalledWith("Lincoln High");
     expect(stateService.setOrganizationId).toHaveBeenCalledWith("12");
@@ -52,8 +52,23 @@ describe("AuthService", () => {
 
     await authService.logIn({ apiToken: "t", directoryId: 4 });
 
-    expect(apiService.getConnectorStatus).toHaveBeenCalledWith("t", 4);
+    expect(apiService.getConnectorStatus).toHaveBeenCalledWith("t", 4, undefined);
     expect(stateService.setOrganizationId).toHaveBeenCalledWith("4");
+  });
+
+  it("logs in to the chosen organization and remembers it for later requests", async () => {
+    apiService.getConnectorStatus.mockResolvedValue({
+      provider: { id: 4, name: "Second" },
+      syncStatus: null,
+      lastSyncAt: null,
+      setupComplete: true,
+      lastUpload: null,
+    });
+
+    await authService.logIn({ apiToken: "t", organizationId: 77 });
+
+    expect(apiService.getConnectorStatus).toHaveBeenCalledWith("t", undefined, 77);
+    expect(stateService.setCockpitOrganizationId).toHaveBeenCalledWith(77);
   });
 
   it("rejects a directory ID that is not a number Cockpit shows", async () => {

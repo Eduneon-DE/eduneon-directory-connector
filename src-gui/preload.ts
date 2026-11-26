@@ -59,8 +59,11 @@ const ipcBridge = {
       ipcRenderer.invoke("secureStorageService", { action: "remove", key }),
   },
   auth: {
-    logIn: (credentials: { apiToken: string; directoryId?: number }): Promise<void> =>
-      ipcRenderer.invoke("auth:login", credentials),
+    logIn: (credentials: {
+      apiToken: string;
+      directoryId?: number;
+      organizationId?: number;
+    }): Promise<void> => ipcRenderer.invoke("auth:login", credentials),
     logOut: (): Promise<void> => ipcRenderer.invoke("auth:logout"),
   },
   sync: {

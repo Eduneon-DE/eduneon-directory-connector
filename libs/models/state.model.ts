@@ -33,6 +33,8 @@ export const StorageKeys = {
   locale: "locale",
   installedVersion: "installedVersion",
   entityId: "entityId",
+  /** The Cockpit organization the API token acts in (X-Organization-ID), when the login has several. */
+  cockpitOrganizationId: "cockpitOrganizationId",
 
   global: "global",
 

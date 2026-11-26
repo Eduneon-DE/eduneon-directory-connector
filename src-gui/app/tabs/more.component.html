@@ -30,6 +30,24 @@
     </div>
   </div>
   <div class="col-sm">
+    <div class="card mb-3">
+      <h3 class="card-header">{{ "connection" | i18n }}</h3>
+      <div class="card-body">
+        <p class="mb-0">
+          {{ "connectedServer" | i18n }}: <span class="text-break">{{ serverUrl() }}</span
+          ><br />
+          {{ "connectedDirectory" | i18n }}:
+          @if (directoryName()) {
+            {{ directoryName() }}
+            @if (directoryId()) {
+              ({{ "directoryIdShort" | i18n: directoryId() }})
+            }
+          } @else {
+            {{ "notConnected" | i18n }}
+          }
+        </p>
+      </div>
+    </div>
     <div class="card">
       <h3 class="card-header">{{ "other" | i18n }}</h3>
       <div class="card-body">

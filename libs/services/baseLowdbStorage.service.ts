@@ -1,8 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { LowSync } from "lowdb";
-import { JSONFileSync } from "lowdb/node";
+import { LowSync, SyncAdapter } from "lowdb";
 
 import { LogService } from "@/libs/abstractions/log.service";
 import { SecureStorageService } from "@/libs/abstractions/storage.service";
@@ -11,6 +10,40 @@ import { sequentialize } from "@/libs/utils/sequentialize";
 import { Utils } from "@/libs/utils/utils";
 
 import { SecureStorageKey, StorageKey } from "../models/state.model";
+
+/**
+ * lowdb's JSONFileSync, but every file it writes is readable only by its owner. lowdb writes a temp
+ * file with the default mode (0644 under the usual umask) and renames it over data.json, so the
+ * file lost its 0600 after the first write; it may hold the bind password and, in plaintext mode,
+ * the API token.
+ */
+export class PrivateJsonFileSync<T> implements SyncAdapter<T> {
+  private tempPath: string;
+
+  constructor(private filePath: string) {
+    this.tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.tmp`);
+  }
+
+  read(): T | null {
+    let text: string;
+    try {
+      text = fs.readFileSync(this.filePath, "utf-8");
+    } catch (e) {
+      if ((e as { code?: string }).code === "ENOENT") {
+        return null;
+      }
+      throw e;
+    }
+    return JSON.parse(text) as T;
+  }
+
+  write(data: T): void {
+    fs.writeFileSync(this.tempPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+    // A temp file left over from an older version keeps its mode on writeFileSync.
+    fs.chmodSync(this.tempPath, 0o600);
+    fs.renameSync(this.tempPath, this.filePath);
+  }
+}
 
 export class LowdbStorageService implements SecureStorageService {
   protected dataFilePath: string;
@@ -34,16 +67,17 @@ export class LowdbStorageService implements SecureStorageService {
     }
 
     this.logService.info("Initializing lowdb storage service.");
-    let adapter: JSONFileSync<Record<string, any>> | undefined;
+    let adapter: PrivateJsonFileSync<Record<string, any>> | undefined;
     if (Utils.isNode && this.dir != null) {
       if (!fs.existsSync(this.dir)) {
-        this.logService.warning(`Could not find dir, "${this.dir}"; creating it instead.`);
+        // Normal on the first start: not worth a warning.
+        this.logService.debug(`Could not find dir, "${this.dir}"; creating it instead.`);
         NodeUtils.mkdirpSync(this.dir, "700");
         this.logService.info(`Created dir "${this.dir}".`);
       }
       this.dataFilePath = path.join(this.dir, "data.json");
       if (!fs.existsSync(this.dataFilePath)) {
-        this.logService.warning(
+        this.logService.debug(
           `Could not find data file, "${this.dataFilePath}"; creating it instead.`,
         );
         fs.writeFileSync(this.dataFilePath, "{}", { mode: 0o600 });
@@ -51,9 +85,15 @@ export class LowdbStorageService implements SecureStorageService {
         this.logService.info(`Created data file "${this.dataFilePath}" with chmod 600.`);
       } else {
         this.logService.info(`db file "${this.dataFilePath} already exists"; using existing db`);
+        // An older version left it readable by everyone after its first write.
+        try {
+          fs.chmodSync(this.dataFilePath, 0o600);
+        } catch (e) {
+          this.logService.warning(`Could not make "${this.dataFilePath}" private: ${e.message}`);
+        }
       }
       await this.lockDbFile(() => {
-        adapter = new JSONFileSync<Record<string, any>>(this.dataFilePath);
+        adapter = new PrivateJsonFileSync<Record<string, any>>(this.dataFilePath);
       });
     }
     try {
@@ -69,11 +109,14 @@ export class LowdbStorageService implements SecureStorageService {
         if (fs.existsSync(this.dataFilePath)) {
           const backupPath = this.dataFilePath + ".bak";
           this.logService.warning(`Writing backup of data file to ${backupPath}`);
-          await fs.copyFile(this.dataFilePath, backupPath, () => {
+          try {
+            fs.copyFileSync(this.dataFilePath, backupPath);
+            fs.chmodSync(backupPath, 0o600);
+          } catch (copyError) {
             this.logService.warning(
-              `Error while creating data file backup, "${e.message}". No backup may have been created.`,
+              `Error while creating data file backup, "${copyError.message}". No backup may have been created.`,
             );
-          });
+          }
         }
         this.db.data = {};
         this.db.write();

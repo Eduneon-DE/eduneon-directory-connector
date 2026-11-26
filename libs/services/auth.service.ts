@@ -17,8 +17,10 @@ export class AuthService {
   /**
    * @param credentials.directoryId the Cockpit directory to sync into; needed only when the
    *   organization has more than one Directory Connector directory (Cockpit shows the id).
+   * @param credentials.organizationId the Cockpit organization to act in; needed only when the token's
+   *   login has accounts in several organizations (Cockpit then asks to choose).
    */
-  async logIn(credentials: { apiToken: string; directoryId?: number }) {
+  async logIn(credentials: { apiToken: string; directoryId?: number; organizationId?: number }) {
     const apiToken = credentials.apiToken?.trim();
     if (Utils.isNullOrWhitespace(apiToken)) {
       throw new Error("An API token is required.");
@@ -28,9 +30,17 @@ export class AuthService {
       throw new Error("The directory ID is the number Cockpit shows for the directory.");
     }
 
-    const status = await this.apiService.getConnectorStatus(apiToken, directoryId);
+    const { organizationId } = credentials;
+    if (organizationId != null && !(Number.isInteger(organizationId) && organizationId > 0)) {
+      throw new Error("The organization ID is the number Cockpit lists for the organization.");
+    }
+
+    const status = await this.apiService.getConnectorStatus(apiToken, directoryId, organizationId);
 
     await this.stateService.setAccessToken(apiToken);
+    await this.stateService.setCockpitOrganizationId(
+      organizationId ?? status.organization?.id ?? null,
+    );
     await this.stateService.setEntityId(status.provider.name);
     await this.stateService.setOrganizationId(String(status.provider.id));
   }

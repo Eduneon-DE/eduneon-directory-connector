@@ -12,7 +12,7 @@ import { GroupEntry } from "../models/groupEntry";
 import { UserEntry } from "../models/userEntry";
 
 import { IDirectoryService } from "./directory-services/directory.service";
-import { SyncService, UPLOAD_CHUNK_SIZE } from "./sync.service";
+import { SyncService, UPLOAD_CHUNK_SIZE, UPLOAD_PART_BYTES } from "./sync.service";
 
 const okResponse: DirectorySyncResponse = {
   provider: { id: 7, name: "Test" },
@@ -154,6 +154,41 @@ describe("SyncService", () => {
     ]);
     expect(new Set(calls.map((c) => c.uploadId)).size).toBe(1);
     expect(calls.map((c) => c.objectClasses)).toEqual([["oc"], undefined, undefined]);
+  });
+
+  it("starts a new part by size, so big entries never make a part over Cockpit's request limit", async () => {
+    // 2000 entries of about 20 KB each: 40 MB, one part by count alone (Cockpit refuses over 50 MiB).
+    const big = "x".repeat(20 * 1024);
+    const entries = Array.from({ length: UPLOAD_CHUNK_SIZE }, (_, i) => ({
+      dn: `uid=u${i},dc=x`,
+      attributes: { uid: [`u${i}`], description: [big] },
+    }));
+    directory.readSnapshot.mockResolvedValue({ baseDn: "dc=x", entries, objectClasses: ["oc"] });
+
+    await syncService.sync(false, false);
+
+    const calls = apiService.postDirectorySync.mock.calls.map(([req]) => req);
+    expect(calls.length).toBeGreaterThanOrEqual(8);
+    for (const call of calls) {
+      expect(call.parts).toBe(calls.length);
+      expect(Buffer.byteLength(JSON.stringify(call.entries))).toBeLessThanOrEqual(
+        UPLOAD_PART_BYTES,
+      );
+    }
+    expect(calls.map((c) => c.part)).toEqual(calls.map((_, i) => i));
+    expect(calls.flatMap((c) => c.entries)).toEqual(entries);
+    expect(new Set(calls.map((c) => c.uploadId)).size).toBe(1);
+  });
+
+  it("puts an entry bigger than a part on its own, and sends an empty snapshot as one part", () => {
+    const huge = { dn: "cn=g,dc=x", attributes: { member: ["y".repeat(200)] } };
+    const small = { dn: "uid=a,dc=x", attributes: { uid: ["a"] } };
+    expect(SyncService.splitIntoParts([small, huge, small], 10, 100)).toEqual([
+      [small],
+      [huge],
+      [small],
+    ]);
+    expect(SyncService.splitIntoParts([])).toEqual([[]]);
   });
 
   it("reports an upload Cockpit keeps until the setup is finished there", async () => {

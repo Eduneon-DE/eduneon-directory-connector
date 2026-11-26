@@ -55,19 +55,82 @@ function toStrings(value: RawValue | RawValue[]): string[] {
   return out;
 }
 
+/** Binary attributes that are sent anyway (base64): they identify an entry. */
+const KEPT_BINARY_ATTRIBUTES = new Set(["objectguid", "objectsid"]);
+
+/**
+ * Photos, certificates and other binary attributes. They are left out: no Cockpit mapping uses
+ * them, and photos alone can make an upload too big for Cockpit.
+ */
+const BINARY_ATTRIBUTES = new Set([
+  "jpegphoto",
+  "thumbnailphoto",
+  "thumbnaillogo",
+  "photo",
+  "audio",
+  "usercertificate",
+  "usersmimecertificate",
+  "userpkcs12",
+  "cacertificate",
+  "crosscertificatepair",
+  "certificaterevocationlist",
+  "authorityrevocationlist",
+  "deltarevocationlist",
+  "mscertificate",
+]);
+
+/** Longest text value sent to Cockpit; a longer one is cut to this length. */
+export const MAX_VALUE_LENGTH = 4096;
+
+/** What fromLdapEntry left out or shortened, counted over a whole read for one log line. */
+export interface ReadLimits {
+  /** Binary values left out (photos, certificates, other values that are not text). */
+  binaryDropped: number;
+  /** Text values cut to MAX_VALUE_LENGTH. */
+  truncated: number;
+}
+
+function isBinaryValue(value: unknown): boolean {
+  return Buffer.isBuffer(value) || value instanceof Uint8Array;
+}
+
 /**
  * Turn an LDAP search entry (ldapts: `{ dn, attr: value | value[] }`) into the entry Cockpit
- * expects: lowercase attribute names, every value a string, binary values base64.
+ * expects: lowercase attribute names, every value a string. Binary values are left out, except the
+ * id attributes (objectGUID, objectSid), which are sent as base64. Text longer than
+ * MAX_VALUE_LENGTH is cut.
  */
-export function fromLdapEntry(entry: Record<string, unknown> & { dn: string }): DirectoryEntry {
+export function fromLdapEntry(
+  entry: Record<string, unknown> & { dn: string },
+  limits?: ReadLimits,
+): DirectoryEntry {
   const attributes: Record<string, string[]> = {};
   for (const [name, value] of Object.entries(entry)) {
     if (name === "dn" || isSecretAttribute(name)) {
       continue;
     }
-    const values = toStrings(value as RawValue | RawValue[]);
+    const key = name.toLowerCase();
+    const base = key.split(";")[0];
+    const list = (Array.isArray(value) ? value : [value]).filter((v) => v != null);
+    if (
+      !KEPT_BINARY_ATTRIBUTES.has(base) &&
+      (BINARY_ATTRIBUTES.has(base) || key.endsWith(";binary") || list.some(isBinaryValue))
+    ) {
+      if (limits) {
+        limits.binaryDropped += list.length;
+      }
+      continue;
+    }
+    const values = toStrings(value as RawValue | RawValue[]).map((v) => {
+      if (v.length <= MAX_VALUE_LENGTH || KEPT_BINARY_ATTRIBUTES.has(base)) {
+        return v;
+      }
+      if (limits) {
+        limits.truncated++;
+      }
+      return v.slice(0, MAX_VALUE_LENGTH);
+    });
     if (values.length > 0) {
-      const key = name.toLowerCase();
       attributes[key] = [...(attributes[key] ?? []), ...values];
     }
   }

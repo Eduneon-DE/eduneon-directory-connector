@@ -10,7 +10,12 @@ export class LogoutCommand {
   ) {}
 
   async run() {
-    await this.logoutCallback();
+    try {
+      await this.logoutCallback();
+    } catch (e) {
+      // Say which tokens are left instead of crashing; running logout again removes them.
+      return Response.error(e);
+    }
     this.authService.logOut(() => {
       /* Do nothing */
     });

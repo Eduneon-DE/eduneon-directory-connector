@@ -110,4 +110,45 @@ describe("ApiService", () => {
       "Could not reach Cockpit at http://localhost:5000/api: fetch failed",
     );
   });
+
+  it("still says to log in again when clearing the rejected token fails", async () => {
+    sut.next = () => json(401, { message: "Unauthorized" });
+    logout.mockRejectedValue(new Error("Failed to clear 1 auth token(s): accessToken"));
+
+    await expect(
+      sut.postDirectorySync({ dryRun: false, baseDn: "", entries: [] }),
+    ).rejects.toMatchObject({ message: expect.stringContaining("Log in again with a new token") });
+  });
+
+  it("sends X-Organization-ID with the stored organization, or the one typed at login", async () => {
+    stateService.getCockpitOrganizationId.mockResolvedValue(42);
+    sut.next = () => json(200, { mappings: [], issues: [] });
+
+    await sut.postDirectorySync({ dryRun: false, baseDn: "", entries: [] });
+    await sut.getConnectorStatus("new-token", undefined, 7);
+    await sut.getConnectorStatus("new-token");
+
+    expect(sut.requests.map((r) => r.headers.get("X-Organization-ID"))).toEqual(["42", "7", null]);
+  });
+
+  it("asks to choose an organization, listing them, and does not log out", async () => {
+    sut.next = () =>
+      json(401, {
+        statusCode: 401,
+        code: "ORGANIZATION_SELECTION_REQUIRED",
+        accounts: [
+          { organizationId: 3, organizationName: "Board A" },
+          { organizationId: 5, organizationName: "Board B" },
+        ],
+      });
+
+    await expect(
+      sut.postDirectorySync({ dryRun: false, baseDn: "", entries: [] }),
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(
+        /several organizations: choose one.*3 \(Board A\), 5 \(Board B\)/,
+      ),
+    });
+    expect(logout).not.toHaveBeenCalled();
+  });
 });

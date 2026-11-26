@@ -1,4 +1,11 @@
-import { CloudSnapshotBuilder, fromLdapEntry, fromObject, isSecretAttribute } from "./raw-entry";
+import {
+  CloudSnapshotBuilder,
+  fromLdapEntry,
+  fromObject,
+  isSecretAttribute,
+  MAX_VALUE_LENGTH,
+  ReadLimits,
+} from "./raw-entry";
 
 describe("fromLdapEntry", () => {
   it("lowercases names, keeps multiple values, base64-encodes binary and drops secrets", () => {
@@ -20,6 +27,43 @@ describe("fromLdapEntry", () => {
         objectguid: ["AQID"],
       },
     });
+  });
+});
+
+describe("fromLdapEntry limits", () => {
+  it("leaves out photos, certificates and other binary values, but keeps objectGUID and objectSid", () => {
+    const limits: ReadLimits = { binaryDropped: 0, truncated: 0 };
+    const entry = fromLdapEntry(
+      {
+        dn: "cn=A,dc=x",
+        cn: "A",
+        jpegPhoto: Buffer.alloc(30000, 0xff),
+        thumbnailPhoto: [Buffer.from([0xff, 0xd8]), Buffer.from([0xff, 0xd9])],
+        "userCertificate;binary": Buffer.from([0x30, 0x82]),
+        // Valid UTF-8 photos come back from ldapts as text; still left out by name.
+        photo: "abc",
+        someUnknownBlob: Buffer.from([0xc3, 0x28]),
+        objectGUID: Buffer.from([1, 2, 3]),
+        objectSid: Buffer.from([4, 5, 6]),
+      },
+      limits,
+    );
+
+    expect(entry.attributes).toEqual({
+      cn: ["A"],
+      objectguid: ["AQID"],
+      objectsid: ["BAUG"],
+    });
+    expect(limits).toEqual({ binaryDropped: 6, truncated: 0 });
+  });
+
+  it("cuts a text value longer than the limit and counts it", () => {
+    const limits: ReadLimits = { binaryDropped: 0, truncated: 0 };
+    const long = "a".repeat(MAX_VALUE_LENGTH + 10);
+    const entry = fromLdapEntry({ dn: "cn=A,dc=x", description: [long, "short"] }, limits);
+
+    expect(entry.attributes.description).toEqual(["a".repeat(MAX_VALUE_LENGTH), "short"]);
+    expect(limits).toEqual({ binaryDropped: 0, truncated: 1 });
   });
 });
 

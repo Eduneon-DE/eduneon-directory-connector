@@ -92,7 +92,9 @@ export class AppComponent implements OnInit {
             this.logService.error(e);
           }
 
-          this.messagingService.send("scheduleNextDirSync");
+          // Hand back the check's generation: the main process ignores it if Stop was pressed
+          // meanwhile.
+          this.messagingService.send("scheduleNextDirSync", { generation: message.generation });
           break;
         case "showToast":
           this.showToast(message);

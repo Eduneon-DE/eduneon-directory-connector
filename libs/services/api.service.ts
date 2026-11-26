@@ -11,6 +11,9 @@ import {
 import { ErrorResponse } from "@/libs/models/response/errorResponse";
 import { Utils } from "@/libs/utils/utils";
 
+/** Cockpit's 401 codes for a login that must name (or named a wrong) organization. */
+const ORGANIZATION_CODES = ["ORGANIZATION_SELECTION_REQUIRED", "INVALID_ORGANIZATION_SELECTION"];
+
 /**
  * Talks to Cockpit. Every request carries the Cockpit API token of a service account as
  * `X-API-Key`; there is no session or token exchange.
@@ -26,9 +29,19 @@ export class ApiService implements ApiServiceAbstraction {
     private customUserAgent: string = null,
   ) {}
 
-  getConnectorStatus(apiToken?: string, directoryId?: number): Promise<ConnectorStatusResponse> {
+  getConnectorStatus(
+    apiToken?: string,
+    directoryId?: number,
+    organizationId?: number,
+  ): Promise<ConnectorStatusResponse> {
     const query = directoryId ? `?providerId=${directoryId}` : "";
-    return this.send("GET", "/v1/directory-connector/status" + query, null, apiToken);
+    return this.send(
+      "GET",
+      "/v1/directory-connector/status" + query,
+      null,
+      apiToken,
+      organizationId,
+    );
   }
 
   postDirectorySync(request: DirectorySyncRequest): Promise<DirectorySyncResponse> {
@@ -44,6 +57,7 @@ export class ApiService implements ApiServiceAbstraction {
     path: string,
     body: unknown,
     apiToken?: string,
+    organizationId?: number,
   ): Promise<T> {
     const apiUrl = await this.stateService.getApiUrl();
     const requestUrl = apiUrl + path;
@@ -64,6 +78,11 @@ export class ApiService implements ApiServiceAbstraction {
       "Eduneon-Client-Name": this.platformUtilsService.getClientType(),
       "Eduneon-Client-Version": await this.platformUtilsService.getApplicationVersion(),
     });
+    // A login with accounts in several organizations must name the one to act in.
+    const orgId = loggingIn ? organizationId : await this.stateService.getCockpitOrganizationId();
+    if (orgId != null) {
+      headers.set("X-Organization-ID", String(orgId));
+    }
     if (this.customUserAgent != null) {
       headers.set("User-Agent", this.customUserAgent);
     }
@@ -97,14 +116,43 @@ export class ApiService implements ApiServiceAbstraction {
       return json as T;
     }
 
-    if (response.status === 401 && !loggingIn) {
-      await this.logoutCallback(true);
+    // A token that is still valid but needs an organization chosen is no reason to log out.
+    const needsOrganization = response.status === 401 && ORGANIZATION_CODES.includes(json?.code);
+    if (response.status === 401 && !loggingIn && !needsOrganization) {
+      try {
+        await this.logoutCallback(true);
+      } catch {
+        // The re-login message below matters more than a failed token cleanup, which the logout
+        // logs itself.
+      }
     }
     throw new ErrorResponse(this.errorBody(json, response, loggingIn), response.status);
   }
 
   /** Cockpit answers `{ statusCode, message }`, where message may be a list of validation errors. */
   private errorBody(json: any, response: Response, loggingIn: boolean): { message: string } {
+    if (response.status === 401 && json?.code === "ORGANIZATION_SELECTION_REQUIRED") {
+      const choices = Array.isArray(json.accounts)
+        ? json.accounts
+            .map((a: { organizationId?: number; organizationName?: string }) =>
+              a.organizationName
+                ? `${a.organizationId} (${a.organizationName})`
+                : `${a.organizationId}`,
+            )
+            .join(", ")
+        : "";
+      return {
+        message:
+          "This account belongs to several organizations: choose one and log in again with its organization ID" +
+          (choices ? `: ${choices}.` : "."),
+      };
+    }
+    if (response.status === 401 && json?.code === "INVALID_ORGANIZATION_SELECTION") {
+      return {
+        message:
+          "This account has no active access to the chosen organization. Log in again with another organization ID.",
+      };
+    }
     if (response.status === 401) {
       return {
         message: loggingIn

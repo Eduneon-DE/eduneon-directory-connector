@@ -161,7 +161,10 @@ export class Main {
 
     handle(
       "auth:login",
-      async (_event, credentials: { apiToken: string; directoryId?: number }) => {
+      async (
+        _event,
+        credentials: { apiToken: string; directoryId?: number; organizationId?: number },
+      ) => {
         await authService.logIn(credentials);
       },
     );

@@ -64,6 +64,8 @@ export interface DirectorySyncResponse {
 
 export interface ConnectorStatusResponse {
   provider: { id: number; name: string };
+  /** The organization the token acts in, when Cockpit says so. */
+  organization?: { id: number; name?: string };
   syncStatus: string | null;
   lastSyncAt: string | null;
   /** True once an admin ran the first import in Cockpit; uploads are applied from then on. */

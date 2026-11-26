@@ -11,6 +11,8 @@ import { MessageResponse } from "@/src-cli/models/response/messageResponse";
 export const API_TOKEN_ENV = "EDUNEON_DC_API_TOKEN";
 /** Optional: the Cockpit directory ID, when the organization has several connector directories. */
 export const DIRECTORY_ID_ENV = "EDUNEON_DC_DIRECTORY_ID";
+/** Optional: the Cockpit organization to act in, when the token's login belongs to several. */
+export const ORGANIZATION_ID_ENV = "EDUNEON_DC_ORGANIZATION_ID";
 
 export class LoginCommand {
   constructor(
@@ -28,9 +30,11 @@ export class LoginCommand {
 
     const rawDirectoryId = process.env[DIRECTORY_ID_ENV]?.trim();
     const directoryId = rawDirectoryId ? Number(rawDirectoryId) : undefined;
+    const rawOrganizationId = process.env[ORGANIZATION_ID_ENV]?.trim();
+    const organizationId = rawOrganizationId ? Number(rawOrganizationId) : undefined;
 
     try {
-      await this.authService.logIn({ apiToken, directoryId });
+      await this.authService.logIn({ apiToken, directoryId, organizationId });
       const directory = await this.stateService.getEntityId();
       return Response.success(
         new MessageResponse(
@@ -39,6 +43,10 @@ export class LoginCommand {
         ),
       );
     } catch (e) {
+      const message = e?.message ?? "";
+      if (/several organizations|chosen organization/.test(message)) {
+        return Response.error(`${message} Set it in ${ORGANIZATION_ID_ENV}.`);
+      }
       return Response.error(e);
     }
   }

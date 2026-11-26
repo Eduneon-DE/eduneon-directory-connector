@@ -13,6 +13,7 @@ import { OktaConfiguration } from "@/libs/models/oktaConfiguration";
 import { OneLoginConfiguration } from "@/libs/models/oneLoginConfiguration";
 import { SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { ConnectorUtils } from "@/libs/utils";
+import { isPortEmpty, normalizeLdapHost } from "@/libs/utils/ldapHost";
 import { NodeUtils } from "@/libs/utils/nodeUtils";
 
 import { Response } from "@/src-cli/models/response";
@@ -37,10 +38,25 @@ const s = (section: Section, field: string, kind: Kind, help: string): Setting =
  * configure it with. Keys are matched case-insensitively; aliases point at the same field.
  */
 export const SETTINGS: Record<string, Setting> = {
-  "ldap.hostname": s("ldap", "hostname", "text", "Directory server host name or IP"),
+  "ldap.hostname": s(
+    "ldap",
+    "hostname",
+    "text",
+    "Directory server host name or IP (ldap://, ldaps:// and :port are taken off)",
+  ),
   "ldap.port": s("ldap", "port", "number", "Port: 389 (LDAP, StartTLS) or 636 (LDAPS)"),
-  "ldap.ssl": s("ldap", "ssl", "boolean", "Use LDAPS (TLS from the start)"),
-  "ldap.starttls": s("ldap", "startTls", "boolean", "Upgrade a plain connection with StartTLS"),
+  "ldap.ssl": s(
+    "ldap",
+    "ssl",
+    "boolean",
+    "Encrypt the connection: LDAPS, or StartTLS with ldap.starttls",
+  ),
+  "ldap.starttls": s(
+    "ldap",
+    "startTls",
+    "boolean",
+    "Encrypt with StartTLS on the plain port instead of LDAPS (the connection fails without it)",
+  ),
   "ldap.tlscapath": s("ldap", "tlsCaPath", "text", "CA certificate file for StartTLS"),
   "ldap.sslcapath": s("ldap", "sslCaPath", "text", "CA certificate file for LDAPS"),
   "ldap.sslcertpath": s("ldap", "sslCertPath", "text", "Client certificate file (LDAPS)"),
@@ -253,6 +269,9 @@ export class ConfigCommand {
       const raw = await this.readValue(value, options, definition);
       await this.loadConfig();
       this.config(definition.section)[definition.field] = this.parse(raw, definition, setting);
+      if (definition.section === "ldap" && definition.field === "hostname") {
+        this.cleanLdapHostname();
+      }
       await this.saveConfig();
       return this.saved(setting);
     } catch (e) {
@@ -317,6 +336,21 @@ export class ConfigCommand {
         return definition.field === "privateKey" ? raw.trimStart() : raw;
       default:
         return raw.trim();
+    }
+  }
+
+  /** "ldaps://dc1:636/" → hostname "dc1"; the port goes to ldap.port when that is empty. */
+  private cleanLdapHostname() {
+    if (this.ldap.hostname == null) {
+      return;
+    }
+    const { hostname, port } = normalizeLdapHost(this.ldap.hostname);
+    if (hostname === "") {
+      throw new Error(this.i18nService.t("ldapHostnameMissing"));
+    }
+    this.ldap.hostname = hostname;
+    if (port != null && isPortEmpty(this.ldap.port)) {
+      this.ldap.port = port;
     }
   }
 

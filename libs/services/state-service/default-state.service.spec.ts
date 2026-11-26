@@ -769,6 +769,24 @@ describe("DefaultStateService", () => {
         expect(secureStorage.store.has(SecureStorageKeys.twoFactorToken)).toBe(false);
       });
 
+      it("removes the keys one at a time (the plaintext store locks one file)", async () => {
+        let running = 0;
+        let most = 0;
+        const realRemove = secureStorage.remove.bind(secureStorage);
+        jest.spyOn(secureStorage, "remove").mockImplementation(async (key) => {
+          running++;
+          most = Math.max(most, running);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          running--;
+          return realRemove(key);
+        });
+
+        await stateService.clearAuthTokens();
+
+        expect(secureStorage.remove).toHaveBeenCalledTimes(5);
+        expect(most).toBe(1);
+      });
+
       it("does not touch regular storage when clearing auth tokens", async () => {
         await stateService.setOrganizationId("org-123");
 

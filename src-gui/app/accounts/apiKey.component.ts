@@ -44,6 +44,7 @@ export class ApiKeyComponent {
 
   apiToken = signal("");
   directoryId = signal("");
+  organizationId = signal("");
   formPromise = signal<Promise<any>>(null);
   showSecret = signal(false);
 
@@ -77,9 +78,11 @@ export class ApiKeyComponent {
 
     try {
       const rawDirectoryId = this.directoryId().trim();
+      const rawOrganizationId = this.organizationId().trim();
       const promise = this.authService.logIn({
         apiToken,
         directoryId: rawDirectoryId === "" ? undefined : Number(rawDirectoryId),
+        organizationId: rawOrganizationId === "" ? undefined : Number(rawOrganizationId),
       });
       this.formPromise.set(promise);
       await promise;

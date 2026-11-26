@@ -389,6 +389,19 @@ export class DefaultStateService implements StateService {
     await this.storageService.save(StorageKeys.organizationId, value);
   }
 
+  async getCockpitOrganizationId(): Promise<number | null> {
+    const value = Number(await this.storageService.get<number>(StorageKeys.cockpitOrganizationId));
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+
+  async setCockpitOrganizationId(value: number | null): Promise<void> {
+    if (value == null) {
+      await this.storageService.remove(StorageKeys.cockpitOrganizationId);
+    } else {
+      await this.storageService.save(StorageKeys.cockpitOrganizationId, value);
+    }
+  }
+
   async getSync(): Promise<SyncConfiguration> {
     return await this.storageService.get<SyncConfiguration>(StorageKeys.sync);
   }
@@ -582,10 +595,11 @@ export class DefaultStateService implements StateService {
   /**
    * Removes every auth token from secure storage.
    *
-   * Each removal is attempted independently via `Promise.allSettled` rather than sequentially
-   * awaited: a single failing key (for example a macOS keychain item whose ACL no longer trusts
-   * this process) must not prevent the remaining tokens from being cleared, which would leave
-   * credentials behind and make a partially-completed logout look like a successful one.
+   * Each removal is attempted on its own: a single failing key (for example a macOS keychain item
+   * whose ACL no longer trusts this process) must not prevent the remaining tokens from being
+   * cleared, which would leave credentials behind and make a partially-completed logout look like a
+   * successful one. The removals run one after another, not at once: in plaintext mode the secure
+   * store is the locked data file, and parallel removals fought over its lock.
    *
    * Failures are logged by key name and then rethrown as one aggregate error so callers can tell
    * an incomplete logout from a clean one. Token values are never logged.
@@ -599,19 +613,24 @@ export class DefaultStateService implements StateService {
       SecureStorageKeys.twoFactorToken,
     ];
 
-    const results = await Promise.allSettled(
-      keys.map((key) => this.secureStorageService.remove(key)),
-    );
-
     const failures: string[] = [];
-    results.forEach((result, i) => {
-      if (result.status === "rejected") {
-        const reason =
-          result.reason instanceof Error ? result.reason.message : String(result.reason);
-        this.logService.error(`Failed to remove secure storage key "${keys[i]}": ${reason}`);
-        failures.push(`${keys[i]} (${reason})`);
+    for (const key of keys) {
+      try {
+        await this.secureStorageService.remove(key);
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        this.logService.error(`Failed to remove secure storage key "${key}": ${reason}`);
+        failures.push(`${key} (${reason})`);
       }
-    });
+    }
+    // The organization chosen at login belongs to that login.
+    try {
+      await this.storageService.remove(StorageKeys.cockpitOrganizationId);
+    } catch (e) {
+      this.logService.error(
+        `Failed to remove the Cockpit organization: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
 
     if (failures.length > 0) {
       throw new Error(`Failed to clear ${failures.length} auth token(s): ${failures.join("; ")}`);

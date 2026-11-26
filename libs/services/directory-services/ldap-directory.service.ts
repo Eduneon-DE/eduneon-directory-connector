@@ -6,6 +6,7 @@ import * as ldapts from "ldapts";
 import { I18nService } from "@/libs/abstractions/i18n.service";
 import { LogService } from "@/libs/abstractions/log.service";
 import { StateService } from "@/libs/abstractions/state.service";
+import { isPortEmpty, normalizeLdapHost } from "@/libs/utils/ldapHost";
 import { Utils } from "@/libs/utils/utils";
 
 import { DirectoryType } from "../../enums/directoryType";
@@ -15,7 +16,7 @@ import { SyncConfiguration } from "../../models/syncConfiguration";
 import { UserEntry } from "../../models/userEntry";
 
 import { DirectorySnapshot, IDirectoryService } from "./directory.service";
-import { fromLdapEntry } from "./raw-entry";
+import { fromLdapEntry, MAX_VALUE_LENGTH, ReadLimits } from "./raw-entry";
 
 const UserControlAccountDisabled = 2;
 
@@ -40,6 +41,47 @@ const RequestedAttributes = ["*", "memberOf", "entryUUID", "modifyTimestamp", "c
  * queries can complete, while still bounding a truly runaway query rather than waiting forever.
  */
 export const LdapSearchTimeLimitSeconds = 5 * 60;
+
+/** How long to wait for the TCP/TLS connection to the server. */
+export const LdapConnectTimeoutMs = 15 * 1000;
+
+/**
+ * How long to wait for the answer to one LDAP request (bind, StartTLS, one page of a search).
+ * Longer than the server-side search limit, so a slow but valid search is not cut; a server that
+ * accepts the connection and never answers fails after this instead of hanging the sync forever.
+ */
+export const LdapOperationTimeoutMs = (LdapSearchTimeLimitSeconds + 30) * 1000;
+
+/**
+ * A short hint about which setting to check, for the errors an admin meets while setting up the
+ * connection. Other errors keep their own message.
+ */
+export function describeLdapError(e: unknown, i18nService: I18nService): Error {
+  if (!(e instanceof Error)) {
+    return new Error(String(e));
+  }
+  const code = (e as { code?: unknown }).code;
+  const text = `${e.message} ${(e as { cause?: unknown }).cause ?? ""}`;
+  let key: string = null;
+  if (code === 49 || e.name === "InvalidCredentialsError") {
+    key = "ldapErrorInvalidCredentials";
+  } else if (code === 32 || e.name === "NoSuchObjectError") {
+    key = "ldapErrorNoSuchObject";
+  } else if (code === "ENOTFOUND" || code === "EAI_AGAIN" || /ENOTFOUND|EAI_AGAIN/.test(text)) {
+    key = "ldapErrorHostNotFound";
+  } else if (code === "ECONNREFUSED" || /ECONNREFUSED/.test(text)) {
+    key = "ldapErrorConnectionRefused";
+  } else if (
+    code === "ETIMEDOUT" ||
+    /ETIMEDOUT|Connection timeout|Operation timed out/.test(text)
+  ) {
+    key = "ldapErrorTimeout";
+  }
+  if (key == null) {
+    return e;
+  }
+  return new Error(i18nService.t(key));
+}
 
 export class LdapDirectoryService implements IDirectoryService {
   private client: ldapts.Client;
@@ -88,7 +130,7 @@ export class LdapDirectoryService implements IDirectoryService {
       }
     } catch (e) {
       await this.client.unbind();
-      throw e;
+      throw this.friendlyError(e);
     }
 
     await this.client.unbind();
@@ -110,7 +152,21 @@ export class LdapDirectoryService implements IDirectoryService {
       const objectClasses = await this.readObjectClasses();
       this.logService.info("Directory snapshot search: " + baseDn + " => (objectClass=*)");
       const searchEntries = await this.searchAll(baseDn);
-      return { baseDn, objectClasses, entries: searchEntries.map((e) => fromLdapEntry(e)) };
+      const limits: ReadLimits = { binaryDropped: 0, truncated: 0 };
+      const entries = searchEntries.map((e) => fromLdapEntry(e, limits));
+      if (limits.binaryDropped > 0) {
+        this.logService.info(
+          `Left out ${limits.binaryDropped} binary value(s) (photos, certificates); they are not sent to Cockpit.`,
+        );
+      }
+      if (limits.truncated > 0) {
+        this.logService.warning(
+          `Cut ${limits.truncated} text value(s) longer than ${MAX_VALUE_LENGTH} characters.`,
+        );
+      }
+      return { baseDn, objectClasses, entries };
+    } catch (e) {
+      throw this.friendlyError(e);
     } finally {
       await this.client.unbind();
     }
@@ -516,15 +572,25 @@ export class LdapDirectoryService implements IDirectoryService {
   }
 
   private async bind(): Promise<any> {
-    if (this.dirConfig.hostname == null || this.dirConfig.port == null) {
+    // A hostname saved as a URL ("ldaps://dc1:636/") still works: only the host is used.
+    const { hostname, port: portInHostname } = normalizeLdapHost(this.dirConfig.hostname);
+    if (hostname === "") {
+      throw new Error(this.i18nService.t("ldapHostnameMissing"));
+    }
+    const port = isPortEmpty(this.dirConfig.port) ? portInHostname : this.dirConfig.port;
+    if (port == null) {
       throw new Error(this.i18nService.t("dirConfigIncomplete"));
     }
 
     const protocol = this.dirConfig.ssl && !this.dirConfig.startTls ? "ldaps" : "ldap";
 
-    const url = protocol + "://" + this.dirConfig.hostname + ":" + this.dirConfig.port;
+    // An IPv6 address goes in brackets in a URL.
+    const host = hostname.includes(":") ? `[${hostname}]` : hostname;
+    const url = protocol + "://" + host + ":" + port;
     const options: ldapts.ClientOptions = {
       url: url.trim().toLowerCase(),
+      connectTimeout: LdapConnectTimeoutMs,
+      timeout: LdapOperationTimeoutMs,
     };
 
     // If using ldaps, TLS options are given to the client constructor
@@ -547,17 +613,27 @@ export class LdapDirectoryService implements IDirectoryService {
       throw new Error(this.i18nService.t("usernamePasswordNotConfigured"));
     }
 
-    // If using StartTLS, TLS options are given to the StartTLS call
-    if (this.dirConfig.startTls && this.dirConfig.ssl) {
-      await this.client.startTLS(this.buildTlsOptions());
-    }
-
     try {
+      // If using StartTLS, TLS options are given to the StartTLS call. StartTLS is asked for on its
+      // own (the CLI sets it without ssl): never fall back to a plain bind that sends the password
+      // in clear text.
+      if (this.dirConfig.startTls) {
+        await this.client.startTLS(this.buildTlsOptions());
+      }
       await this.client.bind(user, pass);
     } catch (error) {
       await this.client.unbind();
-      throw error;
+      throw this.friendlyError(error);
     }
+  }
+
+  /** The error with a hint about which setting to check; the original text goes to the log. */
+  private friendlyError(e: unknown): Error {
+    const friendly = describeLdapError(e, this.i18nService);
+    if (friendly !== e) {
+      this.logService.error("LDAP error: " + (e instanceof Error ? e.message : String(e)));
+    }
+    return friendly;
   }
 
   private buildTlsOptions(): tls.ConnectionOptions {

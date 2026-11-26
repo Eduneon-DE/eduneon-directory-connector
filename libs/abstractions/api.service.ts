@@ -6,6 +6,10 @@ import {
 
 export abstract class ApiService {
   /** Checks a Cockpit API token; uses the stored token when none is given. */
-  getConnectorStatus: (apiToken?: string, directoryId?: number) => Promise<ConnectorStatusResponse>;
+  getConnectorStatus: (
+    apiToken?: string,
+    directoryId?: number,
+    organizationId?: number,
+  ) => Promise<ConnectorStatusResponse>;
   postDirectorySync: (request: DirectorySyncRequest) => Promise<DirectorySyncResponse>;
 }

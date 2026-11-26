@@ -51,6 +51,19 @@
               />
               <div class="form-text">{{ "directoryIdDesc" | i18n }}</div>
             </div>
+            <div class="mb-3">
+              <label for="organization_id" class="form-label">{{ "organizationId" | i18n }}</label>
+              <input
+                id="organization_id"
+                name="OrganizationId"
+                inputmode="numeric"
+                autocomplete="off"
+                [ngModel]="organizationId()"
+                (ngModelChange)="organizationId.set($event)"
+                class="form-control"
+              />
+              <div class="form-text">{{ "organizationIdDesc" | i18n }}</div>
+            </div>
             <div class="d-flex">
               <div>
                 <button type="submit" class="btn btn-primary" [disabled]="form.loading()">

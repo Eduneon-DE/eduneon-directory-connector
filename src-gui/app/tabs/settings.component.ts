@@ -23,6 +23,7 @@ import { OktaConfiguration } from "@/libs/models/oktaConfiguration";
 import { OneLoginConfiguration } from "@/libs/models/oneLoginConfiguration";
 import { SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { ConnectorUtils } from "@/libs/utils";
+import { isPortEmpty, normalizeLdapHost } from "@/libs/utils/ldapHost";
 
 import { A11yTitleDirective } from "@/src-gui/angular/directives/a11y-title.directive";
 import { I18nPipe } from "@/src-gui/angular/pipes/i18n.pipe";
@@ -138,6 +139,15 @@ export class SettingsComponent implements OnInit, OnDestroy {
   async submit() {
     const ldap = this.ldap();
     const sync = this.sync();
+    // A hostname pasted as a URL ("ldaps://dc1:636/") is saved as the host alone; its port fills
+    // an empty port field.
+    if (ldap.hostname != null) {
+      const { hostname, port } = normalizeLdapHost(ldap.hostname);
+      ldap.hostname = hostname;
+      if (port != null && isPortEmpty(ldap.port)) {
+        ldap.port = port;
+      }
+    }
     ConnectorUtils.adjustConfigForSave(ldap, sync);
     if (ldap != null && ldap.ad) {
       ldap.pagedSearch = true;

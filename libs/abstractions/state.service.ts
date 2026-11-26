@@ -29,6 +29,8 @@ export abstract class StateService {
   abstract getOneLoginConfiguration(): Promise<OneLoginConfiguration>;
   abstract setOneLoginConfiguration(value: OneLoginConfiguration): Promise<void>;
   abstract getOrganizationId(): Promise<string>;
+  abstract getCockpitOrganizationId(): Promise<number | null>;
+  abstract setCockpitOrganizationId(value: number | null): Promise<void>;
   abstract setOrganizationId(value: string): Promise<void>;
   abstract getSync(): Promise<SyncConfiguration>;
   abstract setSync(value: SyncConfiguration): Promise<void>;

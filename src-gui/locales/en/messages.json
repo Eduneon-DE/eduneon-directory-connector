@@ -825,5 +825,50 @@
   },
   "ldapSentWhole": {
     "message": "Every sync sends everything under the root path to Cockpit (passwords are never sent). What is imported, and as what (accounts, schools, classes, devices, tickets), is set up in Cockpit under Platform → Authentication."
+  },
+  "ldapHostnameMissing": {
+    "message": "Enter the directory server's host name under \"Server Hostname\"."
+  },
+  "ldapErrorHostNotFound": {
+    "message": "The directory server was not found. Check \"Server Hostname\"."
+  },
+  "ldapErrorConnectionRefused": {
+    "message": "The directory server refused the connection. Check \"Server Port\" and the encryption setting (389 for LDAP and StartTLS, 636 for LDAPS)."
+  },
+  "ldapErrorTimeout": {
+    "message": "The directory server did not answer in time. Check \"Server Hostname\" and \"Server Port\", and that a firewall lets the connection through."
+  },
+  "ldapErrorInvalidCredentials": {
+    "message": "The directory server did not accept the user name or password. Check \"Username\" and \"Password\"."
+  },
+  "ldapErrorNoSuchObject": {
+    "message": "The root path was not found on the directory server. Check \"Root Path\"."
+  },
+  "organizationId": {
+    "message": "Organization ID (optional)"
+  },
+  "organizationIdDesc": {
+    "message": "Only needed if your Cockpit login belongs to several organizations. Cockpit lists the IDs when you log in without one."
+  },
+  "connection": {
+    "message": "Connection"
+  },
+  "connectedServer": {
+    "message": "Cockpit server"
+  },
+  "connectedDirectory": {
+    "message": "Directory"
+  },
+  "directoryIdShort": {
+    "message": "ID $ID$",
+    "placeholders": {
+      "id": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "notConnected": {
+    "message": "Not logged in"
   }
 }

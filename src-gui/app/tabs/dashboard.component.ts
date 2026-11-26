@@ -44,6 +44,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
   /** What Cockpit did with the last upload from this window. */
   lastResult = signal<{ message: string; needsAttention: boolean } | null>(null);
 
+  /** Counts Stop presses, so a Start whose first sync is still running can tell it was stopped. */
+  private stops = 0;
+
   private cdr = inject(ChangeDetectorRef);
   private syncService = inject(RendererSyncService);
   private i18nService = inject(I18nService);
@@ -57,6 +60,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
       switch (message.command) {
         case "dirSyncCompleted":
           await this.updateLastSync();
+          break;
+        // The schedule can change while this tab is open (Stop, a check that re-arms it).
+        case "syncScheduleStarted":
+        case "syncScheduleStopped":
+          this.syncRunning.set(message.command === "syncScheduleStarted");
           break;
         default:
           break;
@@ -73,15 +81,21 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async start() {
+    const stops = this.stops;
     const promise = this.syncService.run(false, false);
     this.startPromise.set(promise);
     await promise;
+    if (stops !== this.stops) {
+      // Stop was pressed while the first sync ran.
+      return;
+    }
     this.messagingService.send("scheduleNextDirSync");
     this.syncRunning.set(true);
     this.platformUtilsService.showToast("success", null, this.i18nService.t("syncingStarted"));
   }
 
   async stop() {
+    this.stops++;
     this.messagingService.send("cancelDirSync");
     this.syncRunning.set(false);
     this.platformUtilsService.showToast("success", null, this.i18nService.t("syncingStopped"));

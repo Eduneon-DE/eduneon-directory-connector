@@ -1,5 +1,9 @@
 export class RendererAuthService {
-  async logIn(credentials: { apiToken: string; directoryId?: number }): Promise<void> {
+  async logIn(credentials: {
+    apiToken: string;
+    directoryId?: number;
+    organizationId?: number;
+  }): Promise<void> {
     return ipc.auth.logIn(credentials);
   }
 

@@ -10,8 +10,15 @@ import { UserEntry } from "@/libs/models/userEntry";
 
 import { DirectorySnapshot, IDirectoryService } from "./directory-services/directory.service";
 
-/** Entries per upload request; a few MB each, well under Cockpit's request limit. */
+/** Most entries per upload request. */
 export const UPLOAD_CHUNK_SIZE = 2000;
+
+/**
+ * Serialized JSON size at which a new part starts. Entries vary a lot in size (a group with
+ * thousands of members), so counting entries alone made parts over Cockpit's 50 MiB request
+ * limit; this keeps each part far below it.
+ */
+export const UPLOAD_PART_BYTES = 5 * 1024 * 1024;
 
 /** What the last sync did, in words for the person who pressed "Sync". */
 export interface SyncOutcome {
@@ -122,12 +129,13 @@ export class SyncService {
   }
 
   /**
-   * Send the snapshot in parts of UPLOAD_CHUNK_SIZE entries under one upload id. Cockpit applies it
-   * when the last part arrives, so the answer to the last part is the result of the sync.
+   * Send the snapshot in parts (see splitIntoParts) under one upload id. Cockpit applies it when
+   * the last part arrives, so the answer to the last part is the result of the sync.
    */
   private async upload(snapshot: DirectorySnapshot): Promise<DirectorySyncResponse> {
     const providerId = Number(await this.stateService.getOrganizationId());
-    const parts = Math.max(1, Math.ceil(snapshot.entries.length / UPLOAD_CHUNK_SIZE));
+    const chunks = SyncService.splitIntoParts(snapshot.entries);
+    const parts = chunks.length;
     const uploadId = crypto.randomUUID();
     let result: DirectorySyncResponse = null;
     for (let part = 0; part < parts; part++) {
@@ -138,7 +146,7 @@ export class SyncService {
         uploadId,
         part,
         parts,
-        entries: snapshot.entries.slice(part * UPLOAD_CHUNK_SIZE, (part + 1) * UPLOAD_CHUNK_SIZE),
+        entries: chunks[part],
         // The schema travels once, with the first part.
         ...(part === 0 && snapshot.objectClasses?.length
           ? { objectClasses: snapshot.objectClasses }
@@ -146,6 +154,35 @@ export class SyncService {
       });
     }
     return result;
+  }
+
+  /**
+   * Parts of at most UPLOAD_CHUNK_SIZE entries and about UPLOAD_PART_BYTES of JSON each; an entry
+   * bigger than that on its own goes in a part by itself. Always at least one part.
+   */
+  static splitIntoParts(
+    entries: DirectoryEntry[],
+    maxEntries = UPLOAD_CHUNK_SIZE,
+    maxBytes = UPLOAD_PART_BYTES,
+  ): DirectoryEntry[][] {
+    const parts: DirectoryEntry[][] = [];
+    let current: DirectoryEntry[] = [];
+    let bytes = 0;
+    for (const entry of entries) {
+      // +1 for the comma between entries in the JSON array.
+      const size = Buffer.byteLength(JSON.stringify(entry), "utf8") + 1;
+      if (current.length > 0 && (current.length >= maxEntries || bytes + size > maxBytes)) {
+        parts.push(current);
+        current = [];
+        bytes = 0;
+      }
+      current.push(entry);
+      bytes += size;
+    }
+    if (current.length > 0 || parts.length === 0) {
+      parts.push(current);
+    }
+    return parts;
   }
 
   /** What Cockpit did with the upload, for the person who pressed "Sync". */
