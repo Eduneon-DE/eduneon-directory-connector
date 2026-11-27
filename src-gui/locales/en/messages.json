@@ -168,7 +168,7 @@
     "message": "Your login session has expired."
   },
   "logOutConfirmation": {
-    "message": "Are you sure you want to log out?"
+    "message": "Are you sure you want to log out? The directory's password or key is removed from this computer too: enter it again in Settings before the next sync."
   },
   "logOut": {
     "message": "Log Out"
@@ -360,20 +360,8 @@
   "removeDisabled": {
     "message": "Remove disabled users during sync"
   },
-  "memberAttribute": {
-    "message": "Member Attribute"
-  },
-  "creationDateAttribute": {
-    "message": "Creation Date Attribute"
-  },
-  "revisionDateAttribute": {
-    "message": "Revision Date Attribute"
-  },
   "useEmailPrefixSuffix": {
     "message": "If a user has no email address, combine a username prefix with a suffix value to form an email"
-  },
-  "emailPrefixAttribute": {
-    "message": "Email Prefix Attribute"
   },
   "emailSuffix": {
     "message": "Email Suffix"
@@ -383,9 +371,6 @@
   },
   "userFilter": {
     "message": "User Filter"
-  },
-  "userFilterHelpLdap": {
-    "message": "Use native LDAP filter syntax. The expression is combined with the user object class filter.\n\nExample:\n(&(givenName=John)(|(l=Dallas)(l=Austin)))"
   },
   "userFilterHelpEntraId": {
     "message": "Filter clauses are separated by |.\n\nSingle-clause filters:\n\n  include:user1@x.com,user2@x.com\n    Sync only the listed users.\n\n  exclude:user1@x.com,user2@x.com\n    Sync everyone except the listed users.\n\n  includeGroup:<groupId1>,<groupId2>\n    Sync only members of the listed groups.\n\n  excludeGroup:<groupId1>,<groupId2>\n    Sync everyone except members of the listed groups.\n\nCombining clauses:\nWhen the first clause is includeGroup, additional excludeGroup and exclude clauses are applied as filters on top of the included set. Multiple clauses of the same kind may be chained.\n\nExample:\nincludeGroup:<allEmployees>|excludeGroup:<contractors>|excludeGroup:<interns>|exclude:test@x.com\n\nThis syncs all members of <allEmployees>, minus members of <contractors> and <interns>, minus test@x.com.\n\nNote: combining requires includeGroup as the first clause. excludeGroup or exclude on their own still match all users in the tenant minus the listed values."
@@ -399,12 +384,6 @@
   "userFilterHelpOneLogin": {
     "message": "Filter syntax:\n\n  include:user1@x.com,user2@x.com\n    Sync only the listed users.\n\n  exclude:user1@x.com,user2@x.com\n    Sync everyone except the listed users."
   },
-  "userObjectClass": {
-    "message": "User Object Class"
-  },
-  "userPath": {
-    "message": "User Path"
-  },
   "syncGroups": {
     "message": "Sync groups"
   },
@@ -416,18 +395,6 @@
   },
   "groupFilterOneLogin": {
     "message": "Role Filter"
-  },
-  "groupObjectClass": {
-    "message": "Group Object Class"
-  },
-  "groupPath": {
-    "message": "Group Path"
-  },
-  "groupNameAttribute": {
-    "message": "Group Name Attribute"
-  },
-  "userEmailAttribute": {
-    "message": "User Email Attribute"
   },
   "sync": {
     "message": "Sync"
@@ -635,17 +602,8 @@
       }
     }
   },
-  "largeImport": {
-    "message": "More than 2000 users or groups are expected to sync."
-  },
-  "overwriteExisting": {
-    "message": "Remove and re-add organization users during the next sync (For debugging purposes)"
-  },
   "overwriteExistingTooltip": {
     "message": "Learn more about Sync options"
-  },
-  "inviteUsersAfterProvisioning": {
-    "message": "Automatically send email invitations"
   },
   "clientId": {
     "message": "Client ID"
@@ -841,6 +799,15 @@
   },
   "ldapSentWhole": {
     "message": "Every sync sends everything under the root path to Cockpit (passwords are never sent). What is imported, and as what (accounts, schools, classes, devices, tickets), is set up in Cockpit under Platform → Authentication."
+  },
+  "ldapUnusedFilters": {
+    "message": "Not used: $SETTINGS$, saved by an earlier version. An LDAP sync does not filter, so choose what is imported in Cockpit. They are removed when the settings are saved.",
+    "placeholders": {
+      "settings": {
+        "content": "$1",
+        "example": "User Filter"
+      }
+    }
   },
   "ldapHostnameMissing": {
     "message": "Enter the directory server's host name under \"Server Hostname\"."

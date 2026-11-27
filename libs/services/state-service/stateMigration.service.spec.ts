@@ -698,6 +698,19 @@ describe("StateMigrationService", () => {
         expect(storage.store.get(StorageKeys.stateVersion)).toBe(StateVersion.Ten);
       });
 
+      it("looks for the entries under the data folder's own keychain name only", async () => {
+        const name = "Eduneon Directory Connector (0123456789ab)";
+        const own = new StateMigrationService(storage, secureStorage, logService, true, name);
+
+        await own.migrate();
+
+        const services = passwords.migrateKeytarPassword.mock.calls.map(
+          (c: [string, string]) => c[0],
+        );
+        expect(services.length).toBeGreaterThan(0);
+        expect(new Set(services)).toEqual(new Set([name]));
+      });
+
       it("logs an error when migrateKeytarPassword returns an error field", async () => {
         passwords.migrateKeytarPassword.mockResolvedValueOnce({
           migrated: false,

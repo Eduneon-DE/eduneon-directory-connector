@@ -1,10 +1,11 @@
 import { I18nService } from "@/libs/abstractions/i18n.service";
 import { MAX_WINDOWS_CREDENTIAL_SECRET_BYTES } from "@/libs/constants";
+import { DirectoryType } from "@/libs/enums/directoryType";
 import { Entry } from "@/libs/models/entry";
 import { GroupEntry } from "@/libs/models/groupEntry";
 import { LdapConfiguration } from "@/libs/models/ldapConfiguration";
 import { SimResult } from "@/libs/models/simResult";
-import { SyncConfiguration } from "@/libs/models/syncConfiguration";
+import { ldapUnusedFilters, SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { UserEntry } from "@/libs/models/userEntry";
 import { SyncService } from "@/libs/services/sync.service";
 
@@ -67,7 +68,25 @@ export class ConnectorUtils {
     return simResult;
   }
 
-  static adjustConfigForSave(ldap: LdapConfiguration, sync: SyncConfiguration) {
+  /**
+   * @param directory the directory in use: with LDAP, the filters left from an earlier version are
+   *   removed (an LDAP sync never filters, see LDAP_UNUSED_FILTERS)
+   * @returns the names of the settings it removed, to tell the admin
+   */
+  static adjustConfigForSave(
+    ldap: LdapConfiguration,
+    sync: SyncConfiguration,
+    directory: DirectoryType = null,
+  ): string[] {
+    const removed = directory === DirectoryType.Ldap ? ldapUnusedFilters(sync) : [];
+    for (const field of removed) {
+      if (field === "removeDisabled") {
+        sync.removeDisabled = false;
+      } else {
+        sync[field as "userFilter" | "groupFilter"] = null;
+      }
+    }
+
     if (ldap.ad) {
       sync.creationDateAttribute = "whenCreated";
       sync.revisionDateAttribute = "whenChanged";
@@ -97,6 +116,7 @@ export class ConnectorUtils {
         sync.interval = interval;
       }
     }
+    return removed;
   }
 
   static exceedsWindowsCredentialByteLimit(value: string): boolean {

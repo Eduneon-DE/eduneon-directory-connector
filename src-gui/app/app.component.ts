@@ -44,7 +44,7 @@ export class AppComponent implements OnInit {
     this.broadcasterService.subscribe(BroadcasterSubscriptionId, async (message: any) => {
       switch (message.command) {
         case "logout":
-          this.logOut(!!message.expired);
+          this.logOut(!!message.expired, !!message.forgetSecrets);
           break;
         case "showToast":
           this.showToast(message);
@@ -63,8 +63,8 @@ export class AppComponent implements OnInit {
     this.broadcasterService.unsubscribe(BroadcasterSubscriptionId);
   }
 
-  private async logOut(expired: boolean) {
-    await this.authService.logOut();
+  private async logOut(expired: boolean, forgetSecrets: boolean) {
+    await this.authService.logOut(forgetSecrets);
     if (expired) {
       this.platformUtilsService.showToast(
         "warning",

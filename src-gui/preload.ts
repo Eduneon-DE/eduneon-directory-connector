@@ -64,7 +64,8 @@ const ipcBridge = {
       directoryId?: number;
       organizationId?: number;
     }): Promise<void> => ipcRenderer.invoke("auth:login", credentials),
-    logOut: (): Promise<void> => ipcRenderer.invoke("auth:logout"),
+    logOut: (forgetSecrets = false): Promise<void> =>
+      ipcRenderer.invoke("auth:logout", { forgetSecrets }),
   },
   sync: {
     run: (

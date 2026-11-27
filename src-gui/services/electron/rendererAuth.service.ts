@@ -7,7 +7,8 @@ export class RendererAuthService {
     return ipc.auth.logIn(credentials);
   }
 
-  logOut(): Promise<void> {
-    return ipc.auth.logOut();
+  /** @param forgetSecrets also remove the directory secrets: a logout the user asked for. */
+  logOut(forgetSecrets = false): Promise<void> {
+    return ipc.auth.logOut(forgetSecrets);
   }
 }

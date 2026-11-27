@@ -78,7 +78,9 @@ export class MoreComponent implements OnInit, OnDestroy {
       this.i18nService.t("cancel"),
     );
     if (confirmed) {
-      this.messagingService.send("logout");
+      // Logging out on purpose also removes the directory's password: an automatic logout (a
+      // revoked token) only removes the token.
+      this.messagingService.send("logout", { forgetSecrets: true });
     }
   }
 

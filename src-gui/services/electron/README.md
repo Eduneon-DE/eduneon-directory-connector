@@ -32,7 +32,7 @@ All Node/Electron APIs cross the IPC bridge via `src-gui/preload.ts`.
 | `storageService`       | renderer → main | electron-store access                       |
 | `secureStorageService` | renderer → main | Keychain via `NativeSecureStorageService`   |
 | `auth:login`           | renderer → main | `AuthService.logIn()`                       |
-| `auth:logout`          | renderer → main | Clears auth tokens                          |
+| `auth:logout`          | renderer → main | Clears auth tokens (and directory secrets)  |
 | `sync:run`             | renderer → main | `SyncService.sync(force, test)`             |
 | `appVersion`           | renderer → main | `app.getVersion()`                          |
 | `showMessageBox`       | renderer → main | Native dialog                               |

@@ -38,6 +38,30 @@ export interface StateMigrator {
   stampVersion(): Promise<void>;
 }
 
+/**
+ * Where each directory keeps its secret: the field of its configuration, and its secure storage
+ * key (with the configuration's id appended, see scopedSecretKey). Entra ID also has the key it had
+ * as Azure AD.
+ */
+const DIRECTORY_SECRETS: Record<DirectoryType, { field: string; keys: SecureStorageKey[] }> = {
+  [DirectoryType.Ldap]: { field: "password", keys: [SecureStorageKeys.ldap] },
+  [DirectoryType.EntraID]: {
+    field: "key",
+    keys: [SecureStorageKeys.entra, SecureStorageKeys.azure],
+  },
+  [DirectoryType.GSuite]: { field: "privateKey", keys: [SecureStorageKeys.gsuite] },
+  [DirectoryType.Okta]: { field: "token", keys: [SecureStorageKeys.okta] },
+  [DirectoryType.OneLogin]: { field: "clientSecret", keys: [SecureStorageKeys.oneLogin] },
+};
+
+const DIRECTORY_TYPES = [
+  DirectoryType.Ldap,
+  DirectoryType.EntraID,
+  DirectoryType.GSuite,
+  DirectoryType.Okta,
+  DirectoryType.OneLogin,
+];
+
 export class DefaultStateService implements StateService {
   constructor(
     protected storageService: StorageService,
@@ -109,91 +133,112 @@ export class DefaultStateService implements StateService {
       | OktaConfiguration
       | OneLoginConfiguration,
   ): Promise<any> {
-    if (this.useSecureStorageForSecrets) {
-      switch (type) {
-        case DirectoryType.Ldap: {
-          const ldapConfig = config as LdapConfiguration;
-          const previous = await this.getLdapConfiguration();
-          ldapConfig.id = this.resolveConfigId(
-            previous,
-            ldapConfigsShareIdentity(previous, ldapConfig),
-          );
-          await this.setLdapSecret(ldapConfig, ldapConfig.password);
-          ldapConfig.password = StoredSecurely;
-          await this.setLdapConfiguration(ldapConfig);
-          break;
-        }
-        case DirectoryType.EntraID: {
-          const entraConfig = config as EntraIdConfiguration;
-          const previous = await this.getEntraConfiguration();
-          entraConfig.id = this.resolveConfigId(
-            previous,
-            entraConfigsShareIdentity(previous, entraConfig),
-          );
-          await this.setEntraSecret(entraConfig, entraConfig.key);
-          entraConfig.key = StoredSecurely;
-          await this.setEntraConfiguration(entraConfig);
-          break;
-        }
-        case DirectoryType.Okta: {
-          const oktaConfig = config as OktaConfiguration;
-          const previous = await this.getOktaConfiguration();
-          oktaConfig.id = this.resolveConfigId(
-            previous,
-            oktaConfigsShareIdentity(previous, oktaConfig),
-          );
-          await this.setOktaSecret(oktaConfig, oktaConfig.token);
-          oktaConfig.token = StoredSecurely;
-          await this.setOktaConfiguration(oktaConfig);
-          break;
-        }
-        case DirectoryType.GSuite: {
-          const gsuiteConfig = config as GSuiteConfiguration;
-          const previous = await this.getGsuiteConfiguration();
-          gsuiteConfig.id = this.resolveConfigId(
-            previous,
-            gsuiteConfigsShareIdentity(previous, gsuiteConfig),
-          );
-          if (gsuiteConfig.privateKey == null) {
-            await this.setGsuiteSecret(gsuiteConfig, null);
-          } else {
-            const normalizedPrivateKey = gsuiteConfig.privateKey.replace(/\\n/g, "\n");
-            await this.setGsuiteSecret(gsuiteConfig, normalizedPrivateKey);
-            gsuiteConfig.privateKey = StoredSecurely;
-          }
-          await this.setGsuiteConfiguration(gsuiteConfig);
-          break;
-        }
-        case DirectoryType.OneLogin: {
-          const oneLoginConfig = config as OneLoginConfiguration;
-          const previous = await this.getOneLoginConfiguration();
-          oneLoginConfig.id = this.resolveConfigId(
-            previous,
-            oneLoginConfigsShareIdentity(previous, oneLoginConfig),
-          );
-          await this.setOneLoginSecret(oneLoginConfig, oneLoginConfig.clientSecret);
-          oneLoginConfig.clientSecret = StoredSecurely;
-          await this.setOneLoginConfiguration(oneLoginConfig);
-          break;
-        }
-      }
-    } else {
-      switch (type) {
-        case DirectoryType.Ldap:
-          await this.setLdapConfiguration(config as LdapConfiguration);
-          break;
-        case DirectoryType.EntraID:
-          await this.setEntraConfiguration(config as EntraIdConfiguration);
-          break;
-        case DirectoryType.Okta:
-          await this.setOktaConfiguration(config as OktaConfiguration);
-          break;
-        case DirectoryType.GSuite:
-          await this.setGsuiteConfiguration(config as GSuiteConfiguration);
-          break;
-        case DirectoryType.OneLogin:
-          await this.setOneLoginConfiguration(config as OneLoginConfiguration);
-          break;
+    // A copy: the caller's object (the settings page's form) keeps the secret it shows. Writing the
+    // placeholder into it made the next save store "[STORED SECURELY]" as the password.
+    const next = { ...config } as Record<string, any>;
+    const secretField = DIRECTORY_SECRETS[type].field;
+    const inUse = await this.getDirectoryType();
+    if (inUse != null && inUse !== type) {
+      // Only the directory in use keeps a secret: the settings of the others are saved along
+      // with it, and their secrets would come back with every save (see setDirectoryType).
+      next[secretField] = null;
+    }
+
+    if (!this.useSecureStorageForSecrets) {
+      await this.saveConfiguration(type, next as IConfiguration);
+      return;
+    }
+
+    const previous = (await this.getConfiguration(type)) as { id?: string } | null;
+    next.id = this.resolveConfigId(previous, this.sharesIdentity(type, previous, next));
+    if (previous?.id != null && previous.id !== next.id) {
+      // Another server or account: the secret saved for the previous one is not used any more.
+      await this.removeSecretSlot(type, previous.id);
+    }
+
+    let secret = next[secretField] as string | null | undefined;
+    if (type === DirectoryType.GSuite && secret != null) {
+      secret = secret.replace(/\\n/g, "\n");
+    }
+    await this.setDirectorySecret(type, next, secret);
+    if (type !== DirectoryType.GSuite || secret != null) {
+      next[secretField] = StoredSecurely;
+    }
+    await this.saveConfiguration(type, next as IConfiguration);
+  }
+
+  private sharesIdentity(type: DirectoryType, previous: unknown, next: unknown): boolean {
+    switch (type) {
+      case DirectoryType.Ldap:
+        return ldapConfigsShareIdentity(previous as LdapConfiguration, next as LdapConfiguration);
+      case DirectoryType.EntraID:
+        return entraConfigsShareIdentity(
+          previous as EntraIdConfiguration,
+          next as EntraIdConfiguration,
+        );
+      case DirectoryType.Okta:
+        return oktaConfigsShareIdentity(previous as OktaConfiguration, next as OktaConfiguration);
+      case DirectoryType.GSuite:
+        return gsuiteConfigsShareIdentity(
+          previous as GSuiteConfiguration,
+          next as GSuiteConfiguration,
+        );
+      case DirectoryType.OneLogin:
+        return oneLoginConfigsShareIdentity(
+          previous as OneLoginConfiguration,
+          next as OneLoginConfiguration,
+        );
+    }
+  }
+
+  private async setDirectorySecret(
+    type: DirectoryType,
+    config: Record<string, any>,
+    value: string,
+  ): Promise<void> {
+    switch (type) {
+      case DirectoryType.Ldap:
+        return await this.setLdapSecret(config as LdapConfiguration, value);
+      case DirectoryType.EntraID:
+        return await this.setEntraSecret(config as EntraIdConfiguration, value);
+      case DirectoryType.Okta:
+        return await this.setOktaSecret(config as OktaConfiguration, value);
+      case DirectoryType.GSuite:
+        return await this.setGsuiteSecret(config as GSuiteConfiguration, value);
+      case DirectoryType.OneLogin:
+        return await this.setOneLoginSecret(config as OneLoginConfiguration, value);
+    }
+  }
+
+  private async saveConfiguration(type: DirectoryType, config: IConfiguration): Promise<void> {
+    switch (type) {
+      case DirectoryType.Ldap:
+        return await this.setLdapConfiguration(config as LdapConfiguration);
+      case DirectoryType.EntraID:
+        return await this.setEntraConfiguration(config as EntraIdConfiguration);
+      case DirectoryType.Okta:
+        return await this.setOktaConfiguration(config as OktaConfiguration);
+      case DirectoryType.GSuite:
+        return await this.setGsuiteConfiguration(config as GSuiteConfiguration);
+      case DirectoryType.OneLogin:
+        return await this.setOneLoginConfiguration(config as OneLoginConfiguration);
+    }
+  }
+
+  /**
+   * Removes the secret a configuration with this id kept. Not the legacy unscoped key: copies of
+   * data.json from before ids may still need it (clearDirectorySecrets removes that one). A
+   * failure is logged, not thrown: the settings are saved either way.
+   */
+  private async removeSecretSlot(type: DirectoryType, id: string): Promise<void> {
+    for (const legacyKey of DIRECTORY_SECRETS[type].keys) {
+      const key = this.scopedSecretKey(legacyKey, id);
+      try {
+        await this.secureStorageService.remove(key);
+      } catch (e) {
+        this.logService.error(
+          `Failed to remove secure storage key "${key}": ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }
   }
@@ -420,6 +465,15 @@ export class DefaultStateService implements StateService {
       await this.clearSyncSettings();
     }
     await this.storageService.save(StorageKeys.directoryType, value);
+    if (value != null && currentType != null && value !== currentType) {
+      // Another directory: the secrets of the one given up are not needed any more. The type is
+      // saved either way; a secret that could not be removed is logged, and logout removes it.
+      try {
+        await this.clearDirectorySecrets(value);
+      } catch (e) {
+        this.logService.error(e instanceof Error ? e.message : String(e));
+      }
+    }
   }
 
   async getLastUserSync(): Promise<Date> {
@@ -634,6 +688,72 @@ export class DefaultStateService implements StateService {
 
     if (failures.length > 0) {
       throw new Error(`Failed to clear ${failures.length} auth token(s): ${failures.join("; ")}`);
+    }
+  }
+
+  /**
+   * Removes the secret (bind password, client secret, Okta token, private key) of every directory but
+   * `except`, from the keychain or, with plaintext secrets, from data.json. The keychain entries are
+   * the ones the current configurations name and the legacy unscoped ones; an entry left by a
+   * configuration data.json no longer holds cannot be found by name.
+   *
+   * Like clearAuthTokens, every removal is attempted on its own, and the failures are rethrown
+   * together by key name. Secret values are never logged.
+   */
+  async clearDirectorySecrets(except: DirectoryType = null): Promise<void> {
+    const failures: string[] = [];
+    for (const type of DIRECTORY_TYPES.filter((t) => t !== except)) {
+      const { field, keys } = DIRECTORY_SECRETS[type];
+      let config: Record<string, any> = null;
+      try {
+        config = (await this.getConfiguration(type)) as Record<string, any>;
+        if (!this.useSecureStorageForSecrets) {
+          if (config?.[field] != null) {
+            await this.saveConfiguration(type, { ...config, [field]: null } as IConfiguration);
+          }
+          continue;
+        }
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        this.logService.error(`Failed to remove the ${field} of ${DirectoryType[type]}: ${reason}`);
+        failures.push(`${DirectoryType[type]} ${field} (${reason})`);
+        continue;
+      }
+      for (const legacyKey of keys) {
+        const scoped = config?.id != null ? [this.scopedSecretKey(legacyKey, config.id)] : [];
+        for (const key of [...scoped, legacyKey]) {
+          try {
+            await this.secureStorageService.remove(key);
+          } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            this.logService.error(`Failed to remove secure storage key "${key}": ${reason}`);
+            failures.push(`${key} (${reason})`);
+          }
+        }
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `Failed to clear ${failures.length} directory secret(s): ${failures.join("; ")}`,
+      );
+    }
+  }
+
+  /**
+   * Everything this connector keeps in the keychain for its data folder: the auth tokens and the
+   * directory secrets. For a logout and `eduneon-dc forget`. Both are attempted even when one fails.
+   */
+  async clearAllSecrets(): Promise<void> {
+    const errors: string[] = [];
+    for (const clear of [() => this.clearAuthTokens(), () => this.clearDirectorySecrets()]) {
+      try {
+        await clear();
+      } catch (e) {
+        errors.push(e instanceof Error ? e.message : String(e));
+      }
+    }
+    if (errors.length > 0) {
+      throw new Error(errors.join(" "));
     }
   }
 

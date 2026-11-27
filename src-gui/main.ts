@@ -3,7 +3,6 @@ import * as path from "path";
 
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 
-import { APPLICATION_NAME } from "@/libs/constants";
 import { AppIdService } from "@/libs/services/appId.service";
 import { AuthService } from "@/libs/services/auth.service";
 import { DefaultDirectoryFactoryService } from "@/libs/services/directory-factory.service";
@@ -15,6 +14,7 @@ import { DefaultStateService } from "@/libs/services/state-service/default-state
 import { StateMigrationService } from "@/libs/services/state-service/stateMigration.service";
 import { SyncService } from "@/libs/services/sync.service";
 import { TokenService } from "@/libs/services/token/token.service";
+import { secureStorageServiceName } from "@/libs/utils/secureStorageName";
 
 import { ElectronLogService } from "@/src-gui/services/electron/electronLog.service";
 import { ElectronMainMessagingService } from "@/src-gui/services/electron/electronMainMessaging.service";
@@ -59,6 +59,10 @@ export class Main {
   trayMain: TrayMain;
 
   constructor() {
+    // Electron's own folder, before an override: a data folder other than this one gets keychain
+    // entries of its own (see secureStorageServiceName).
+    const defaultDataFolder = app.getPath("userData");
+
     // Set paths for portable builds
     let appDataPath = null;
     if (process.env.EDUNEON_DC_APPDATA_DIR != null) {
@@ -86,11 +90,14 @@ export class Main {
     this.i18nService = new I18nService("en", "./locales/");
     this.storageService = new ElectronStorageService(app.getPath("userData"));
 
-    const secureStorageService = new NativeSecureStorageService(APPLICATION_NAME, this.logService);
+    const keychainName = secureStorageServiceName(app.getPath("userData"), defaultDataFolder);
+    const secureStorageService = new NativeSecureStorageService(keychainName, this.logService);
     const stateMigrationService = new StateMigrationService(
       this.storageService,
       secureStorageService,
       this.logService,
+      true,
+      keychainName,
     );
 
     this.stateService = new DefaultStateService(
@@ -169,8 +176,13 @@ export class Main {
       },
     );
 
-    handle("auth:logout", async () => {
-      await this.stateService.clearAuthTokens();
+    handle("auth:logout", async (_event, options?: { forgetSecrets?: boolean }) => {
+      if (options?.forgetSecrets) {
+        // The Log Out button: the directory's password goes with the token.
+        await this.stateService.clearAllSecrets();
+      } else {
+        await this.stateService.clearAuthTokens();
+      }
     });
 
     handle("sync:preview", () => syncService.preview());

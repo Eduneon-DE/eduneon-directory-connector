@@ -107,4 +107,37 @@ describe("SettingsComponent save", () => {
     expect(state.store["dir" + DirectoryType.Ldap]).toMatchObject({ hostname: "dc1", port: 636 });
     expect(c.ldap()).toMatchObject({ hostname: "dc1", port: 636, ssl: true });
   });
+
+  // #102
+  it("names the LDAP filters an earlier version saved, and removes them on save", async () => {
+    const state = memoryState();
+    state.store.type = DirectoryType.Ldap;
+    state.store.sync = { interval: 15, userFilter: "(uid=alice)", removeDisabled: true };
+    const c = settingsWith(state);
+    await c.ngOnInit();
+
+    expect(c.ldapUnusedFilters()).toEqual(["userFilter", "removeDisabled"]);
+
+    await c.save();
+
+    expect(state.store.sync).toMatchObject({
+      interval: 15,
+      userFilter: null,
+      removeDisabled: false,
+    });
+    expect(c.ldapUnusedFilters()).toEqual([]);
+  });
+
+  it("keeps the filters of another directory", async () => {
+    const state = memoryState();
+    state.store.type = DirectoryType.EntraID;
+    state.store.sync = { interval: 15, userFilter: "exclude:joe@school.test" };
+    const c = settingsWith(state);
+    await c.ngOnInit();
+
+    await c.save();
+
+    expect(c.ldapUnusedFilters()).toEqual([]);
+    expect(state.store.sync.userFilter).toBe("exclude:joe@school.test");
+  });
 });

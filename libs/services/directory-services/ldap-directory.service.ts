@@ -13,7 +13,7 @@ import { Utils } from "@/libs/utils/utils";
 import { DirectoryType } from "../../enums/directoryType";
 import { GroupEntry } from "../../models/groupEntry";
 import { LdapConfiguration } from "../../models/ldapConfiguration";
-import { SyncConfiguration } from "../../models/syncConfiguration";
+import { ldapUnusedFilters, SyncConfiguration } from "../../models/syncConfiguration";
 import { UserEntry } from "../../models/userEntry";
 
 import { DirectorySnapshot, IDirectoryService } from "./directory.service";
@@ -224,6 +224,16 @@ export class LdapDirectoryService implements IDirectoryService {
     const baseDn = this.dirConfig.rootPath?.trim() ?? "";
     if (baseDn === "") {
       throw new Error("Set the root path (base DN) of the directory before syncing.");
+    }
+    // Filters an earlier version saved: they never applied to this read, which an admin who set
+    // one may not know.
+    const unused = ldapUnusedFilters(await this.stateService.getSync());
+    if (unused.length > 0) {
+      this.logService.warning(
+        `Not used by an LDAP sync: ${unused.map((f) => `sync.${f}`).join(", ")}. ` +
+          `Everything under "${baseDn}" is read; Cockpit's mappings choose what is imported. ` +
+          "Saving the settings removes them.",
+      );
     }
 
     await this.bind();

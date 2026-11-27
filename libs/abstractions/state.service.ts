@@ -74,6 +74,10 @@ export abstract class StateService {
 
   // Token management (replaces TokenService.clearToken())
   abstract clearAuthTokens(): Promise<void>;
+  /** The secrets of every directory but `except`, wherever they are kept. */
+  abstract clearDirectorySecrets(except?: DirectoryType): Promise<void>;
+  /** The auth tokens and every directory secret: a logout, or `eduneon-dc forget`. */
+  abstract clearAllSecrets(): Promise<void>;
   abstract getAccessToken(): Promise<string>;
   abstract setAccessToken(value: string): Promise<void>;
   abstract getRefreshToken(): Promise<string>;

@@ -202,7 +202,8 @@ try {
   );
   const tested = await dc("test");
   check(
-    tested.code === 0 && /Read 9 entries/.test(tested.out),
+    // The base entry is read and sent, but not counted: it is not part of the directory below it.
+    tested.code === 0 && /Read 8 entries/.test(tested.out),
     "test reads the whole directory without a login",
   );
   check(received.parts === 0, "test sends nothing");
@@ -224,6 +225,17 @@ try {
     Object.keys(e.attributes).some((a) => /password/i.test(a)),
   );
   check(!leaked, "no password attribute was uploaded");
+  check(
+    (await dc("config", "sync.userfilter", "(uid=alice)")).code !== 0,
+    "an LDAP user filter is refused: an LDAP sync sends everything under the base DN",
+  );
+  check((await dc("logout")).code === 0, "logout");
+  check(
+    (await dc("config", "show")).out.includes("ldap.password: (not set)"),
+    "logout removes the bind password too",
+  );
+  check((await dc("forget")).code !== 0, "forget without a terminal asks for --yes");
+  check((await dc("forget", "--yes")).code === 0, "forget --yes deletes the secrets");
 } finally {
   directory.close();
   cockpit.close();

@@ -18,14 +18,18 @@ import { passwords } from "dc-native";
 // to support migrating from v3 directly to v5.
 const MinSupportedStateVersion = StateVersion.Three;
 
-const SECURE_STORAGE_SERVICE_NAME = APPLICATION_NAME;
-
 export class StateMigrationService {
+  /**
+   * @param secureStorageServiceName the name secureStorageService keeps this data folder's
+   *   keychain entries under (see secureStorageServiceName): the legacy entries are looked for
+   *   there only, never copied over from another data folder's name.
+   */
   constructor(
     protected storageService: StorageService,
     protected secureStorageService: SecureStorageService,
     protected logService: LogService,
     protected useSecureStorageForSecrets = true,
+    protected secureStorageServiceName = APPLICATION_NAME,
   ) {}
 
   async needsMigration(): Promise<boolean> {
@@ -273,7 +277,7 @@ export class StateMigrationService {
 
     const results = await Promise.all(
       credentialKeys.map((key) =>
-        passwords.migrateKeytarPassword(SECURE_STORAGE_SERVICE_NAME, key),
+        passwords.migrateKeytarPassword(this.secureStorageServiceName, key),
       ),
     );
 
@@ -329,7 +333,7 @@ export class StateMigrationService {
 
         let raw: string | null;
         try {
-          raw = await passwords.readKeytarPassword(SECURE_STORAGE_SERVICE_NAME, oldKey);
+          raw = await passwords.readKeytarPassword(this.secureStorageServiceName, oldKey);
         } catch (e) {
           this.logService.error(
             `StateMigrationService (v6 to v7): failed to read legacy credential "${oldKey}": ${e}`,
@@ -464,7 +468,7 @@ export class StateMigrationService {
     if (clientId && !(await this.hasGsuiteSecret())) {
       const oldKey = `${clientId}_gsuitePrivateKey`;
       try {
-        const raw = await passwords.readKeytarPassword(SECURE_STORAGE_SERVICE_NAME, oldKey);
+        const raw = await passwords.readKeytarPassword(this.secureStorageServiceName, oldKey);
         if (raw != null) {
           // raw is the keytar blob verbatim (JSON.stringify'd by the old KeytarSecureStorageService).
           // Parse it once so save doesn't double-encode it.

@@ -1,11 +1,7 @@
-import * as fs from "fs";
-import * as path from "path";
-
 import { DirectoryFactoryService } from "@/libs/abstractions/directory-factory.service";
 import { EnvironmentService } from "@/libs/abstractions/environment.service";
 import { SecureStorageService } from "@/libs/abstractions/storage.service";
 import { TokenService } from "@/libs/abstractions/token.service";
-import { APPLICATION_NAME } from "@/libs/constants";
 import { ClientType } from "@/libs/enums/clientType";
 import { LogLevelType } from "@/libs/enums/logLevelType";
 import { AppIdService } from "@/libs/services/appId.service";
@@ -24,9 +20,11 @@ import {
 import { StateMigrationService } from "@/libs/services/state-service/stateMigration.service";
 import { SyncService } from "@/libs/services/sync.service";
 import { TokenService as TokenServiceImplementation } from "@/libs/services/token/token.service";
+import { secureStorageServiceName } from "@/libs/utils/secureStorageName";
 
 import { CliPlatformUtilsService } from "@/src-cli/services/cliPlatformUtils.service";
 import { ConsoleLogService } from "@/src-cli/services/consoleLog.service";
+import { cliDataFolder } from "@/src-cli/services/node/dataFolder";
 import { NodeApiService } from "@/src-cli/services/node/nodeApi.service";
 import { trustSystemCaCertificates } from "@/src-cli/services/node/trustSystemCaCertificates";
 
@@ -36,6 +34,10 @@ import { Program } from "./program";
 
 export class Main {
   dataFilePath: string;
+  /** The name of this data folder's keychain entries (see secureStorageServiceName). */
+  secureStorageServiceName: string;
+  /** Secrets are kept in data.json (EDUNEON_DC_PLAINTEXT_SECRETS), not in the keychain. */
+  plaintextSecrets: boolean;
   logService: ConsoleLogService;
   program: Program;
 
@@ -55,25 +57,14 @@ export class Main {
   directoryFactoryService: DirectoryFactoryService;
 
   constructor() {
-    const applicationName = APPLICATION_NAME;
-    if (process.env.EDUNEON_DC_APPDATA_DIR) {
-      this.dataFilePath = path.resolve(process.env.EDUNEON_DC_APPDATA_DIR);
-    } else if (fs.existsSync(path.join(__dirname, "eduneon-connector-appdata"))) {
-      this.dataFilePath = path.join(__dirname, "eduneon-connector-appdata");
-    } else if (process.platform === "darwin") {
-      this.dataFilePath = path.join(
-        process.env.HOME,
-        "Library/Application Support/" + applicationName,
-      );
-    } else if (process.platform === "win32") {
-      this.dataFilePath = path.join(process.env.APPDATA, applicationName);
-    } else if (process.env.XDG_CONFIG_HOME) {
-      this.dataFilePath = path.join(process.env.XDG_CONFIG_HOME, applicationName);
-    } else {
-      this.dataFilePath = path.join(process.env.HOME, ".config/" + applicationName);
-    }
+    const { dataFolder, defaultDataFolder } = cliDataFolder();
+    this.dataFilePath = dataFolder;
+    // A data folder other than the default one has keychain entries of its own; the default
+    // folder, which the desktop app uses too, keeps the name it always had.
+    this.secureStorageServiceName = secureStorageServiceName(dataFolder, defaultDataFolder);
 
     const plaintextSecrets = process.env.EDUNEON_DC_PLAINTEXT_SECRETS === "true";
+    this.plaintextSecrets = plaintextSecrets;
     this.i18nService = new I18nService("en", "./locales");
     this.platformUtilsService = new CliPlatformUtilsService(
       ClientType.DirectoryConnector,
@@ -92,13 +83,14 @@ export class Main {
     );
     this.secureStorageService = plaintextSecrets
       ? this.storageService
-      : new NativeSecureStorageService(applicationName, this.logService);
+      : new NativeSecureStorageService(this.secureStorageServiceName, this.logService);
 
     this.stateMigrationService = new StateMigrationService(
       this.storageService,
       this.secureStorageService,
       this.logService,
       !plaintextSecrets,
+      this.secureStorageServiceName,
     );
 
     this.stateService = new DefaultStateService(

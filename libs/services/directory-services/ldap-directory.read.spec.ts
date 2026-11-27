@@ -124,6 +124,40 @@ describe("LdapDirectoryService reads", () => {
     expect(snapshot.unfollowedReferrals).toBeUndefined();
   });
 
+  // #102: Cockpit's mappings choose what is imported; the snapshot is everything under the base DN.
+  it("reads everything under the base DN whatever user or group filter an earlier version saved", async () => {
+    stateService.getSync.mockResolvedValue(
+      getSyncConfiguration({
+        userFilter: "(uid=alice)",
+        groupFilter: "(cn=staff)",
+        removeDisabled: true,
+        userPath: "ou=people",
+      }),
+    );
+
+    await service.readSnapshot();
+
+    expect(baseSearches()).not.toHaveLength(0);
+    for (const options of baseSearches()) {
+      expect(options.filter).toBe("(objectClass=*)");
+      expect(options.scope).toBe("sub");
+    }
+    expect(searchMock.mock.calls.map(([base]) => base)).not.toContain(
+      "ou=people,dc=example,dc=com",
+    );
+    expect(logService.warning).toHaveBeenCalledWith(
+      expect.stringContaining("sync.userFilter, sync.groupFilter, sync.removeDisabled"),
+    );
+  });
+
+  it("warns about no filter when none is set", async () => {
+    stateService.getSync.mockResolvedValue(getSyncConfiguration());
+
+    await service.readSnapshot();
+
+    expect(logService.warning).not.toHaveBeenCalled();
+  });
+
   // conn-20 and conn-21
   it("asks for the operational ids Cockpit offers and reads every binary id as bytes", async () => {
     await service.readSnapshot();

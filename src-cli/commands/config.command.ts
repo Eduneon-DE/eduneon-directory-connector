@@ -12,7 +12,7 @@ import { GSuiteConfiguration } from "@/libs/models/gsuiteConfiguration";
 import { LdapConfiguration } from "@/libs/models/ldapConfiguration";
 import { OktaConfiguration } from "@/libs/models/oktaConfiguration";
 import { OneLoginConfiguration } from "@/libs/models/oneLoginConfiguration";
-import { SyncConfiguration } from "@/libs/models/syncConfiguration";
+import { ldapUnusedFilters, SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { ConnectorUtils } from "@/libs/utils";
 import { applyLdapHostInput } from "@/libs/utils/ldapHost";
 import { NodeUtils } from "@/libs/utils/nodeUtils";
@@ -113,13 +113,13 @@ export const SETTINGS: Record<string, Setting> = {
     "sync",
     "userFilter",
     "text",
-    "Which users to read (Entra ID, Google, Okta, OneLogin; LDAP sends the whole base DN)",
+    "Which users to read (Entra ID, Google, Okta, OneLogin)",
   ),
   "sync.groupfilter": s(
     "sync",
     "groupFilter",
     "text",
-    "Which groups to read (Entra ID, Google, Okta, OneLogin; LDAP sends the whole base DN)",
+    "Which groups to read (Entra ID, Google, Okta, OneLogin)",
   ),
   "sync.interval": s(
     "sync",
@@ -133,86 +133,13 @@ export const SETTINGS: Record<string, Setting> = {
     "boolean",
     "Leave out disabled users (Entra ID, Google, Okta, OneLogin)",
   ),
-  "sync.overwriteexisting": s(
-    "sync",
-    "overwriteExisting",
-    "boolean",
-    "Replace what an earlier sync sent",
-  ),
-  "sync.largeimport": s("sync", "largeImport", "boolean", "The directory is very large"),
-  "sync.userpath": s(
-    "sync",
-    "userPath",
-    "text",
-    "LDAP test view only: where users are, below the base DN (a sync sends the whole base DN)",
-  ),
-  "sync.grouppath": s(
-    "sync",
-    "groupPath",
-    "text",
-    "LDAP test view only: where groups are, below the base DN (a sync sends the whole base DN)",
-  ),
-  "sync.userobjectclass": s(
-    "sync",
-    "userObjectClass",
-    "text",
-    "Object class of a user (e.g. inetOrgPerson)",
-  ),
-  "sync.groupobjectclass": s(
-    "sync",
-    "groupObjectClass",
-    "text",
-    "Object class of a group (e.g. groupOfNames)",
-  ),
-  "sync.useremailattribute": s(
-    "sync",
-    "userEmailAttribute",
-    "text",
-    "Attribute holding a user's e-mail",
-  ),
-  "sync.groupnameattribute": s(
-    "sync",
-    "groupNameAttribute",
-    "text",
-    "Attribute holding a group's name",
-  ),
-  "sync.memberattribute": s(
-    "sync",
-    "memberAttribute",
-    "text",
-    "Attribute listing a group's members",
-  ),
   "sync.useemailprefixsuffix": s(
     "sync",
     "useEmailPrefixSuffix",
     "boolean",
-    "Build e-mails from an attribute and a suffix",
+    "OneLogin: give a user without an e-mail the user name and sync.emailSuffix",
   ),
-  "sync.emailprefixattribute": s(
-    "sync",
-    "emailPrefixAttribute",
-    "text",
-    "Attribute for the e-mail's local part",
-  ),
-  "sync.emailsuffix": s("sync", "emailSuffix", "text", "E-mail domain, e.g. @school.org"),
-  "sync.creationdateattribute": s(
-    "sync",
-    "creationDateAttribute",
-    "text",
-    "Attribute with the creation date",
-  ),
-  "sync.revisiondateattribute": s(
-    "sync",
-    "revisionDateAttribute",
-    "text",
-    "Attribute with the last change date",
-  ),
-  "sync.inviteusersafterprovisioning": s(
-    "sync",
-    "inviteUsersAfterProvisioning",
-    "boolean",
-    "Send invitation emails to synced users",
-  ),
+  "sync.emailsuffix": s("sync", "emailSuffix", "text", "OneLogin: e-mail domain, e.g. @school.org"),
 };
 
 /** Directory names `config directory` accepts, besides the numbers. */
@@ -240,18 +167,59 @@ const SECTION_OF_DIRECTORY: Record<DirectoryType, Section> = {
 
 const SECTIONS: Section[] = ["ldap", "entra", "gsuite", "okta", "onelogin", "sync"];
 
+/** Why no LDAP setting chooses what is sent. */
+const LDAP_SENDS_EVERYTHING =
+  "an LDAP sync sends everything under ldap.rootPath, and Cockpit's mappings choose what is imported";
+
 /**
- * sync.* settings an LDAP sync does not use: it sends everything under the base DN, and Cockpit
- * filters there. They only shape the user/group lists of `eduneon-dc test` and the app's test view
- * (paths, object classes and attributes), or nothing at all on LDAP (filters, removeDisabled).
+ * Settings taken over from Bitwarden's connector that no sync here uses, kept to answer an old
+ * script clearly. The LDAP ones only shaped a user and group search that a sync no longer makes; the
+ * others were options of Bitwarden's import. An export from an earlier version may still hold them:
+ * `config import` passes over them.
  */
-const IGNORED_FOR_LDAP = new Set(["userFilter", "groupFilter", "removeDisabled"]);
+const REMOVED_SETTINGS: Record<string, string> = {
+  "sync.userpath": LDAP_SENDS_EVERYTHING,
+  "sync.grouppath": LDAP_SENDS_EVERYTHING,
+  "sync.userobjectclass": LDAP_SENDS_EVERYTHING,
+  "sync.groupobjectclass": LDAP_SENDS_EVERYTHING,
+  "sync.useremailattribute": LDAP_SENDS_EVERYTHING,
+  "sync.groupnameattribute": LDAP_SENDS_EVERYTHING,
+  "sync.memberattribute": LDAP_SENDS_EVERYTHING,
+  "sync.emailprefixattribute": LDAP_SENDS_EVERYTHING,
+  "sync.creationdateattribute": LDAP_SENDS_EVERYTHING,
+  "sync.revisiondateattribute": LDAP_SENDS_EVERYTHING,
+  "sync.overwriteexisting":
+    "every sync sends the whole directory, and Cockpit decides what to do with it",
+  "sync.largeimport": "every sync sends the whole directory, in parts, whatever its size",
+  "sync.inviteusersafterprovisioning": "Cockpit decides what to do with the accounts it imports",
+};
+
+/**
+ * sync.* settings of the other directories, which mean nothing to an LDAP sync: with LDAP chosen, a
+ * value is refused (clearing one is not) and `config show` leaves them out.
+ */
+const NOT_FOR_LDAP = new Set([
+  "users",
+  "groups",
+  "userFilter",
+  "groupFilter",
+  "removeDisabled",
+  "useEmailPrefixSuffix",
+  "emailSuffix",
+]);
+
+/** A value that does something: not empty, not off. */
+function holdsValue(value: unknown): boolean {
+  return value != null && value !== false && !(typeof value === "string" && value.trim() === "");
+}
 
 /** Holds a lock across one whole read-change-write of the settings (see run). */
 export type ConfigLock = <T>(action: () => Promise<T>) => Promise<T>;
 
 export class ConfigCommand {
   private directory: DirectoryType;
+  /** sync.* settings this command did not keep because an LDAP sync does not use them. */
+  private notKeptForLdap: string[] = [];
   private ldap = new LdapConfiguration();
   private gsuite = new GSuiteConfiguration();
   private entra = new EntraIdConfiguration();
@@ -304,6 +272,9 @@ export class ConfigCommand {
           return this.saved(setting);
       }
 
+      if (key in REMOVED_SETTINGS) {
+        return Response.badRequest(`${setting} is no longer a setting: ${REMOVED_SETTINGS[key]}.`);
+      }
       const definition = SETTINGS[key];
       if (definition == null) {
         return Response.badRequest(
@@ -312,7 +283,13 @@ export class ConfigCommand {
       }
       const raw = await this.readValue(value, options, definition, setting);
       await this.loadConfig();
-      this.config(definition.section)[definition.field] = this.parse(raw, definition, setting);
+      const parsed = this.parse(raw, definition, setting);
+      if (this.notForLdap(definition) && holdsValue(parsed)) {
+        throw new Error(
+          `${setting} is not used with LDAP: ${LDAP_SENDS_EVERYTHING}. ("null" clears it.)`,
+        );
+      }
+      this.config(definition.section)[definition.field] = parsed;
       if (definition.section === "ldap" && definition.field === "hostname") {
         this.cleanLdapHostname();
       }
@@ -324,24 +301,42 @@ export class ConfigCommand {
   }
 
   private saved(what: string, note: string = null) {
-    return Response.success(new MessageResponse(this.i18nService.t("savedSetting", what), note));
+    const notes = [note];
+    if (this.notKeptForLdap.length > 0) {
+      // Values an earlier version saved, or an imported file held.
+      notes.push(
+        `Not kept, as an LDAP sync does not use them: ${[...new Set(this.notKeptForLdap)].join(", ")}. ` +
+          `A sync sends everything under ldap.rootPath; choose what is imported in Cockpit's mappings.`,
+      );
+    }
+    const message = notes.filter((n) => n != null).join("\n");
+    return Response.success(
+      new MessageResponse(
+        this.i18nService.t("savedSetting", what),
+        message === "" ? null : message,
+      ),
+    );
   }
 
   /** What the saved value means, when it is not what the admin may expect. */
   private noteAbout(definition: Setting): string {
-    if (definition.section !== "sync") {
-      return null;
-    }
-    if (definition.field === "interval" && this.sync.interval == null) {
+    if (
+      definition.section === "sync" &&
+      definition.field === "interval" &&
+      this.sync.interval == null
+    ) {
       return "The desktop app's automatic sync is off.";
     }
-    if (this.directory === DirectoryType.Ldap && IGNORED_FOR_LDAP.has(definition.field)) {
-      return (
-        "An LDAP sync does not use this setting: it sends everything under the base DN, " +
-        "and what is imported is chosen in Cockpit."
-      );
-    }
     return null;
+  }
+
+  /** A setting of the other directories, while LDAP is the directory in use. */
+  private notForLdap(definition: Setting): boolean {
+    return (
+      this.directory === DirectoryType.Ldap &&
+      definition.section === "sync" &&
+      NOT_FOR_LDAP.has(definition.field)
+    );
   }
 
   /**
@@ -531,16 +526,23 @@ export class ConfigCommand {
       if ((definition.section !== section && definition.section !== "sync") || shown.has(id)) {
         continue;
       }
+      if (this.notForLdap(definition)) {
+        continue;
+      }
       shown.add(id);
       const value = this.config(definition.section)[definition.field];
       let text = value == null || value === "" ? "-" : String(value);
       if (definition.kind === "secret") {
         text = value ? "(set)" : "(not set)";
       }
-      if (this.directory === DirectoryType.Ldap && IGNORED_FOR_LDAP.has(definition.field)) {
-        text += "   (not used by an LDAP sync)";
-      }
       lines.push(`${name}: ${text}`);
+    }
+    const unused = this.directory === DirectoryType.Ldap ? ldapUnusedFilters(this.sync) : [];
+    if (unused.length > 0) {
+      lines.push(
+        `Not used by an LDAP sync, and removed on the next save: ${unused.map((f) => `sync.${f}`).join(", ")}` +
+          ` (${LDAP_SENDS_EVERYTHING}).`,
+      );
     }
     return Response.success(new StringResponse(lines.join("\n")));
   }
@@ -548,12 +550,17 @@ export class ConfigCommand {
   /** Every non-secret setting as JSON, to set up another server with `config import`. */
   private async export(path: string) {
     await this.loadConfig();
+    // The settings `config` has, so no secret, no id, and none of the REMOVED_SETTINGS.
     const withoutSecrets = (section: Section) => {
-      const copy: Record<string, unknown> = { ...this.config(section) };
-      delete copy.id;
+      const config = this.config(section);
+      const copy: Record<string, unknown> = {};
       for (const definition of Object.values(SETTINGS)) {
-        if (definition.section === section && definition.kind === "secret") {
-          delete copy[definition.field];
+        if (
+          definition.section === section &&
+          definition.kind !== "secret" &&
+          definition.field in config
+        ) {
+          copy[definition.field] = config[definition.field];
         }
       }
       return copy;
@@ -600,7 +607,13 @@ export class ConfigCommand {
           definition.field in values
         ) {
           // The same rules as `config <setting> <value>`: a file is no way around them.
-          target[definition.field] = this.parseImported(values[definition.field], definition, name);
+          const value = this.parseImported(values[definition.field], definition, name);
+          if (this.notForLdap(definition) && holdsValue(value)) {
+            // An export from another directory, or from an earlier version: left out, and said.
+            this.notKeptForLdap.push(`sync.${definition.field}`);
+            continue;
+          }
+          target[definition.field] = value;
         }
       }
     }
@@ -640,7 +653,8 @@ export class ConfigCommand {
   }
 
   private async saveConfig() {
-    ConnectorUtils.adjustConfigForSave(this.ldap, this.sync);
+    const removed = ConnectorUtils.adjustConfigForSave(this.ldap, this.sync, this.directory);
+    this.notKeptForLdap.push(...removed.map((field) => `sync.${field}`));
     await this.stateService.setDirectoryType(this.directory);
     await this.stateService.setDirectory(DirectoryType.Ldap, this.ldap);
     await this.stateService.setDirectory(DirectoryType.GSuite, this.gsuite);

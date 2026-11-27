@@ -188,6 +188,8 @@ describe("DefaultStateService", () => {
         ...(storage.store.get(StorageKeys.directoryLdap) as LdapConfiguration),
       };
 
+      // Another data.json, not account 1's edited: editing the account removes its password.
+      storage.store.delete(StorageKeys.directoryLdap);
       await stateService.setDirectory(DirectoryType.Ldap, { ...account2 });
       const savedAccount2 = storage.store.get(StorageKeys.directoryLdap) as LdapConfiguration;
 
@@ -221,6 +223,55 @@ describe("DefaultStateService", () => {
       expect(secondSave.id).toBe(firstSave.id);
       const result = await stateService.getDirectory<LdapConfiguration>(DirectoryType.Ldap);
       expect(result.password).toBe("password-two");
+    });
+
+    it.each([
+      ["server", { hostname: "dc2.example.com" }],
+      ["account", { username: "other-account" }],
+    ])(
+      "removes the old password from the keychain when the %s changes",
+      async (_what, change: Partial<LdapConfiguration>) => {
+        await stateService.setDirectory(DirectoryType.Ldap, { ...ldapConfig });
+        const before = storage.store.get(StorageKeys.directoryLdap) as LdapConfiguration;
+
+        // The settings page and `config` save the password they read along with the change.
+        await stateService.setDirectory(DirectoryType.Ldap, { ...ldapConfig, ...change });
+        const after = storage.store.get(StorageKeys.directoryLdap) as LdapConfiguration;
+
+        expect(after.id).not.toBe(before.id);
+        expect(secureStorage.store.has(scopedSecretKey(SecureStorageKeys.ldap, before))).toBe(
+          false,
+        );
+        expect(secureStorage.store.get(scopedSecretKey(SecureStorageKeys.ldap, after))).toBe(
+          "secret-password",
+        );
+        expect([...secureStorage.store.keys()]).toEqual([
+          scopedSecretKey(SecureStorageKeys.ldap, after),
+        ]);
+      },
+    );
+
+    it("still saves the settings when the old password cannot be removed", async () => {
+      await stateService.setDirectory(DirectoryType.Ldap, { ...ldapConfig });
+      jest.spyOn(secureStorage, "remove").mockRejectedValueOnce(new Error("keychain locked"));
+
+      await stateService.setDirectory(DirectoryType.Ldap, { ...ldapConfig, hostname: "dc2" });
+
+      expect((await stateService.getLdapConfiguration()).hostname).toBe("dc2");
+      expect(noopLog.error).toHaveBeenCalledWith(expect.stringContaining("keychain locked"));
+    });
+
+    // Found with #106: saving wrote the placeholder into the settings page's own object, so its
+    // next save (Save, then leaving the tab) stored "[STORED SECURELY]" as the bind password.
+    it("keeps the password when the same settings object is saved twice", async () => {
+      const form = { ...ldapConfig };
+
+      await stateService.setDirectory(DirectoryType.Ldap, form);
+      await stateService.setDirectory(DirectoryType.Ldap, form);
+
+      expect(form.password).toBe("secret-password");
+      const result = await stateService.getDirectory<LdapConfiguration>(DirectoryType.Ldap);
+      expect(result.password).toBe("secret-password");
     });
 
     it("falls back to the legacy unscoped key for installs upgrading from a single shared secret", async () => {
@@ -405,6 +456,8 @@ describe("DefaultStateService", () => {
         ...(storage.store.get(StorageKeys.directoryEntra) as EntraIdConfiguration),
       };
 
+      // Another data.json copied in, not tenant 1's edited.
+      storage.store.delete(StorageKeys.directoryEntra);
       await stateService.setDirectory(DirectoryType.EntraID, { ...tenant2 });
       const savedTenant2 = storage.store.get(StorageKeys.directoryEntra) as EntraIdConfiguration;
       expect(savedTenant1Snapshot.id).not.toBe(savedTenant2.id);
@@ -750,6 +803,147 @@ describe("DefaultStateService", () => {
   });
 
   // -------------------------------------------------------------------------
+
+  describe("secrets of a directory that is not in use", () => {
+    const entra = { tenant: "t", applicationId: "a", key: "entra-key" } as EntraIdConfiguration;
+
+    async function savedWithSecrets() {
+      await stateService.setDirectory(DirectoryType.Ldap, { ...ldapConfig });
+      await stateService.setDirectory(DirectoryType.EntraID, { ...entra });
+    }
+
+    it("keeps every directory's secret while no directory is chosen", async () => {
+      await savedWithSecrets();
+
+      expect(
+        (await stateService.getDirectory<LdapConfiguration>(DirectoryType.Ldap)).password,
+      ).toBe("secret-password");
+      expect(
+        (await stateService.getDirectory<EntraIdConfiguration>(DirectoryType.EntraID)).key,
+      ).toBe("entra-key");
+    });
+
+    it("removes the bind password when the directory type changes", async () => {
+      await savedWithSecrets();
+      await stateService.setDirectoryType(DirectoryType.Ldap);
+
+      await stateService.setDirectoryType(DirectoryType.EntraID);
+
+      const ldap = storage.store.get(StorageKeys.directoryLdap) as LdapConfiguration;
+      expect(secureStorage.store.has(scopedSecretKey(SecureStorageKeys.ldap, ldap))).toBe(false);
+      expect(ldap.hostname).toBe(ldapConfig.hostname);
+      expect(
+        (await stateService.getDirectory<EntraIdConfiguration>(DirectoryType.EntraID)).key,
+      ).toBe("entra-key");
+    });
+
+    it("does not save it back with the other directories' settings after the change", async () => {
+      await stateService.setDirectoryType(DirectoryType.Ldap);
+      await savedWithSecrets();
+      // What the settings page and `config` do: read every directory, then save every directory.
+      const ldap = await stateService.getDirectory<LdapConfiguration>(DirectoryType.Ldap);
+      const entraRead = await stateService.getDirectory<EntraIdConfiguration>(
+        DirectoryType.EntraID,
+      );
+
+      await stateService.setDirectoryType(DirectoryType.EntraID);
+      await stateService.setDirectory(DirectoryType.Ldap, ldap);
+      await stateService.setDirectory(DirectoryType.EntraID, { ...entraRead, key: "entra-key" });
+
+      expect(
+        (await stateService.getDirectory<LdapConfiguration>(DirectoryType.Ldap)).password,
+      ).toBe(null);
+      expect([...secureStorage.store.keys()]).toEqual([
+        scopedSecretKey(SecureStorageKeys.entra, storage.store.get(StorageKeys.directoryEntra)),
+      ]);
+    });
+
+    it("keeps the secret when the same directory type is saved again", async () => {
+      await stateService.setDirectoryType(DirectoryType.Ldap);
+      await stateService.setDirectory(DirectoryType.Ldap, { ...ldapConfig });
+
+      await stateService.setDirectoryType(DirectoryType.Ldap);
+
+      expect(
+        (await stateService.getDirectory<LdapConfiguration>(DirectoryType.Ldap)).password,
+      ).toBe("secret-password");
+    });
+
+    it("removes it from data.json when secrets are kept there", async () => {
+      const plain = makeStateService(storage, secureStorage, false);
+      await plain.setDirectoryType(DirectoryType.Ldap);
+      await plain.setDirectory(DirectoryType.Ldap, { ...ldapConfig });
+
+      await plain.setDirectoryType(DirectoryType.Okta);
+
+      const ldap = storage.store.get(StorageKeys.directoryLdap) as LdapConfiguration;
+      expect(ldap.password).toBeNull();
+      expect(ldap.username).toBe(ldapConfig.username);
+    });
+  });
+
+  describe("clearDirectorySecrets and clearAllSecrets", () => {
+    it("removes every directory's secret, scoped and legacy, and keeps the settings", async () => {
+      await stateService.setDirectory(DirectoryType.Ldap, { ...ldapConfig });
+      await stateService.setDirectory(DirectoryType.GSuite, {
+        domain: "d",
+        clientEmail: "e",
+        privateKey: "pk",
+      } as GSuiteConfiguration);
+      await stateService.setDirectory(DirectoryType.Okta, { orgUrl: "o", token: "t" });
+      for (const key of Object.values(SecureStorageKeys).slice(0, 6)) {
+        secureStorage.store.set(key, "legacy");
+      }
+      await stateService.setAccessToken("token");
+
+      await stateService.clearDirectorySecrets();
+
+      expect([...secureStorage.store.keys()]).toEqual([SecureStorageKeys.accessToken]);
+      expect((await stateService.getLdapConfiguration()).hostname).toBe(ldapConfig.hostname);
+    });
+
+    it("removes the secrets from data.json when secrets are kept there", async () => {
+      const plain = makeStateService(storage, secureStorage, false);
+      await plain.setDirectory(DirectoryType.Ldap, { ...ldapConfig });
+      await plain.setDirectory(DirectoryType.Okta, { orgUrl: "o", token: "t" });
+
+      await plain.clearDirectorySecrets();
+
+      expect(storage.store.get(StorageKeys.directoryLdap)).toMatchObject({
+        hostname: ldapConfig.hostname,
+        password: null,
+      });
+      expect(storage.store.get(StorageKeys.directoryOkta)).toMatchObject({ token: null });
+    });
+
+    it("clearAllSecrets removes the tokens and the directory secrets", async () => {
+      await stateService.setDirectory(DirectoryType.Ldap, { ...ldapConfig });
+      await stateService.setAccessToken("token");
+      await stateService.setCockpitOrganizationId(7);
+
+      await stateService.clearAllSecrets();
+
+      expect(secureStorage.store.size).toBe(0);
+      expect(await stateService.getCockpitOrganizationId()).toBeNull();
+      expect(await stateService.getIsAuthenticated()).toBe(false);
+    });
+
+    it("clearAllSecrets removes the directory secrets even when a token cannot be removed", async () => {
+      await stateService.setDirectory(DirectoryType.Ldap, { ...ldapConfig });
+      await stateService.setAccessToken("token");
+      const realRemove = secureStorage.remove.bind(secureStorage);
+      jest.spyOn(secureStorage, "remove").mockImplementation(async (key) => {
+        if (key === SecureStorageKeys.accessToken) {
+          throw new Error("keychain locked");
+        }
+        return realRemove(key);
+      });
+
+      await expect(stateService.clearAllSecrets()).rejects.toThrow(SecureStorageKeys.accessToken);
+
+      expect([...secureStorage.store.keys()]).toEqual([SecureStorageKeys.accessToken]);
+    });
+  });
 
   describe("Token Management", () => {
     describe("clearAuthTokens", () => {

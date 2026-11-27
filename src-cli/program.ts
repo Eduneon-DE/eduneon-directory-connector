@@ -3,6 +3,8 @@ import * as path from "path";
 import chalk from "chalk";
 import { Command, OptionValues } from "commander";
 
+import { APPLICATION_NAME } from "@/libs/constants";
+
 import { BaseProgram } from "@/src-cli/baseProgram";
 import { UpdateCommand } from "@/src-cli/commands/update.command";
 import { Response } from "@/src-cli/models/response";
@@ -10,6 +12,7 @@ import { StringResponse } from "@/src-cli/models/response/stringResponse";
 
 import { ClearCacheCommand } from "./commands/clearCache.command";
 import { ConfigCommand, SETTINGS } from "./commands/config.command";
+import { ForgetCommand } from "./commands/forget.command";
 import { LastSyncCommand } from "./commands/lastSync.command";
 import { LoginCommand } from "./commands/login.command";
 import { LogoutCommand } from "./commands/logout.command";
@@ -80,6 +83,7 @@ export class Program extends BaseProgram {
       writeLn("    eduneon-dc sync");
       writeLn("    eduneon-dc last-sync");
       writeLn("    eduneon-dc config server https://cockpit.example.com");
+      writeLn("    eduneon-dc forget");
       writeLn("    eduneon-dc update");
       writeLn("", true);
     });
@@ -98,7 +102,7 @@ export class Program extends BaseProgram {
 
     program
       .command("logout")
-      .description("Log out of the current user account.")
+      .description("Log out, and remove the directory's password or key as well.")
       .on("--help", () => {
         writeLn("\n  Examples:");
         writeLn("");
@@ -107,11 +111,32 @@ export class Program extends BaseProgram {
       })
       .action(async () => {
         await this.exitIfNotAuthed();
-        const command = new LogoutCommand(
-          this.main.authService,
-          async () => await this.main.logout(),
-        );
+        const command = new LogoutCommand(this.main.authService, this.main.stateService);
         const response = await command.run();
+        this.processResponse(response);
+      });
+
+    program
+      .command("forget")
+      .description(
+        "Delete the API token and the directory passwords and keys this data folder keeps in the keychain.",
+      )
+      .option("--yes", "Delete without asking first.")
+      .on("--help", () => {
+        writeLn("\n  Notes:");
+        writeLn("");
+        writeLn("    The settings (data.json) are kept; it logs out too. Other data folders");
+        writeLn("    (EDUNEON_DC_APPDATA_DIR) have entries of their own and keep them.");
+        writeLn("");
+        writeLn("  Examples:");
+        writeLn("");
+        writeLn("    eduneon-dc forget");
+        writeLn("    eduneon-dc forget --yes");
+        writeLn("", true);
+      })
+      .action(async (options: OptionValues) => {
+        const command = new ForgetCommand(this.main.stateService, this.secretsLocation());
+        const response = await command.run(options);
         this.processResponse(response);
       });
 
@@ -304,7 +329,23 @@ export class Program extends BaseProgram {
   async exitIfNotAuthed() {
     const authed = await this.stateService.getIsAuthenticated();
     if (!authed) {
-      this.processResponse(Response.error("You are not logged in."), true);
+      let message = "You are not logged in.";
+      if (!this.main.plaintextSecrets && this.main.secureStorageServiceName !== APPLICATION_NAME) {
+        // Before, every data folder shared the default folder's token: one set up that way logs in
+        // again for its own.
+        message +=
+          ` The data folder ${this.main.dataFilePath} keeps its own token and directory password` +
+          " in the keychain: log in, and set the password, for this folder.";
+      }
+      this.processResponse(Response.error(message), true);
     }
+  }
+
+  /** Where the secrets of this data folder are kept, for the answers of `forget`. */
+  private secretsLocation(): string {
+    const folder = this.main.dataFilePath;
+    return this.main.plaintextSecrets
+      ? `the settings file in ${folder}`
+      : `the keychain entries "${this.main.secureStorageServiceName}" (data folder ${folder})`;
   }
 }

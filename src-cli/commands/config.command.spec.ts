@@ -258,18 +258,115 @@ describe("ConfigCommand", () => {
     expect((await a.state.getSync()).interval).toBe(15);
   });
 
-  // conn-27
-  it("says an LDAP sync does not use the user filter, in the answer and in `config show`", async () => {
-    const c = await cli();
-    await c.run("directory", "ldap");
+  // conn-27, #102
+  describe("settings an LDAP sync does not use", () => {
+    const message = (result: { data: unknown }) =>
+      (result.data as { message: string }).message ?? "";
+    const shown = async (c: Awaited<ReturnType<typeof cli>>) =>
+      ((await c.run("show")).data as unknown as { data: string }).data;
 
-    const result = await c.run("sync.userfilter", "(uid=alice)");
+    it("refuses a user filter with LDAP, and says why", async () => {
+      const c = await cli();
+      await c.run("directory", "ldap");
 
-    expect(result.success).toBe(true);
-    expect((result.data as unknown as { message: string }).message).toContain(
-      "does not use this setting",
+      const result = await c.run("sync.userfilter", "(uid=alice)");
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("not used with LDAP");
+      expect(result.message).toContain("Cockpit's mappings");
+      expect((await c.state.getSync())?.userFilter ?? null).toBeNull();
+    });
+
+    it("still clears one", async () => {
+      const c = await cli();
+      await c.run("directory", "ldap");
+
+      expect((await c.run("sync.userfilter", "null")).success).toBe(true);
+    });
+
+    it("keeps the filters of the other directories", async () => {
+      const c = await cli();
+      await c.run("directory", "entra");
+
+      expect((await c.run("sync.userfilter", "exclude:joe@school.test")).success).toBe(true);
+      expect((await c.state.getSync()).userFilter).toBe("exclude:joe@school.test");
+    });
+
+    it.each([["sync.userpath"], ["sync.memberattribute"], ["sync.overwriteexisting"]])(
+      "says %s is no longer a setting",
+      async (setting) => {
+        const result = await (await cli()).run(setting, "x");
+
+        expect(result.success).toBe(false);
+        expect(result.message).toContain("no longer a setting");
+      },
     );
-    const shown = (await c.run("show")).data as unknown as { data: string };
-    expect(shown.data).toMatch(/sync\.userfilter: \(uid=alice\)\s+\(not used by an LDAP sync\)/);
+
+    it("shows only what an LDAP sync uses, and names a filter left from an earlier version", async () => {
+      const c = await cli();
+      await c.run("directory", "ldap");
+      await c.state.setSync({ ...(await c.state.getSync()), userFilter: "(uid=alice)" });
+
+      const text = await shown(c);
+
+      expect(text).toContain("sync.interval:");
+      expect(text).not.toMatch(/^sync\.(users|userfilter|groupfilter|removedisabled):/m);
+      expect(text).toContain("removed on the next save: sync.userFilter");
+    });
+
+    it("removes such a filter on the next save, and says so", async () => {
+      const c = await cli();
+      await c.run("directory", "ldap");
+      await c.state.setSync({
+        ...(await c.state.getSync()),
+        groupFilter: "(cn=staff)",
+        removeDisabled: true,
+      });
+
+      const result = await c.run("ldap.port", "636");
+
+      expect(result.success).toBe(true);
+      expect(message(result)).toContain("sync.groupFilter, sync.removeDisabled");
+      expect(await c.state.getSync()).toMatchObject({ groupFilter: null, removeDisabled: false });
+      expect(await shown(c)).not.toContain("removed on the next save");
+    });
+
+    it("leaves such a filter out of an import into LDAP, and says so", async () => {
+      const c = await cli();
+      const file = path.join(dir, "old-export.json");
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          directory: "ldap",
+          ldap: { hostname: "dc1.school.test" },
+          sync: { interval: 15, userFilter: "(uid=alice)", userPath: "ou=people" },
+        }),
+      );
+
+      const result = await c.run("import", file);
+
+      expect(result.success).toBe(true);
+      expect(message(result)).toContain("sync.userFilter");
+      const sync = await c.state.getSync();
+      expect(sync.interval).toBe(15);
+      expect(sync.userFilter ?? null).toBeNull();
+      expect(sync.userPath ?? null).toBeNull();
+    });
+
+    it("exports no setting that was removed", async () => {
+      const c = await cli();
+      await c.run("directory", "ldap");
+      await c.run("ldap.ad", "true");
+
+      const exported = JSON.parse(
+        ((await c.run("export")).data as unknown as { data: string }).data,
+      );
+
+      expect(exported.sync).toHaveProperty("interval");
+      expect(exported.sync).not.toHaveProperty("userPath");
+      expect(exported.sync).not.toHaveProperty("userObjectClass");
+      expect(exported.ldap).toMatchObject({ ad: true });
+      expect(exported.ldap).not.toHaveProperty("id");
+    });
   });
 });

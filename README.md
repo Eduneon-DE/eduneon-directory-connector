@@ -21,6 +21,8 @@ It comes as a desktop app (Windows, macOS, Linux) and as a command-line tool, `e
 
 Each sync reads the **whole** directory and sends it to Cockpit as raw entries over HTTPS. Cockpit applies the mapping: it creates and updates records, and deactivates those that disappeared if the directory is set to do so. Password attributes (`userPassword`, `unicodePwd`, LAPS, …) are never sent. An empty read is never sent, so a broken filter cannot deactivate everyone.
 
+For LDAP and Active Directory the connector filters nothing: the base DN (`ldap.rootPath`) is the only setting that limits what is read, and Cockpit's mappings choose what is imported. The user and group filters, paths and attribute settings of Bitwarden's connector are gone (see [Settings from earlier versions](#settings-from-earlier-versions)).
+
 ## Install
 
 Download the latest release from the [Releases page](https://github.com/Eduneon-DE/eduneon-directory-connector/releases):
@@ -107,6 +109,24 @@ eduneon-dc config sync.groups true
 `eduneon-dc config --help` lists every setting; `eduneon-dc config show` shows the current ones (secrets
 only as _(set)_).
 
+A secret belongs to the directory and the account it was given for. Changing the directory type
+(`config directory`) removes the secrets of the previous directory, and changing the server or the account
+(`ldap.hostname`, `ldap.username`, `ldap.domain`, or an Entra ID tenant, …) removes the password saved for the
+previous one; the password you set or keep is saved for the new one.
+
+#### Settings from earlier versions
+
+`sync.userPath`, `sync.groupPath`, the object class and attribute settings (`sync.userObjectClass`,
+`sync.memberAttribute`, …), `sync.overwriteExisting`, `sync.largeImport` and
+`sync.inviteUsersAfterProvisioning` are no longer settings: no sync used them. `config` says so when a script
+still sets one, and `config import` passes over them in an older export.
+
+With LDAP chosen, the settings of the other directories (`sync.users`, `sync.groups`, `sync.userFilter`,
+`sync.groupFilter`, `sync.removeDisabled`, `sync.useEmailPrefixSuffix`, `sync.emailSuffix`) are refused:
+they would filter nothing. A user filter, group filter or _remove disabled users_ that an earlier version
+saved is named by `config show`, `test` and `sync`, and removed the next time the settings are saved
+(a `config` command, or Save in the desktop app), which says so.
+
 ### 3. Check what it reads
 
 ```bash
@@ -130,6 +150,17 @@ When the API token's account belongs to several organizations, also set `EDUNEON
 The first sync only delivers the directory to Cockpit: the admin chooses there what to import and runs the
 first import. From then on every sync is applied at once, and `sync` prints what Cockpit created,
 updated and deactivated. It exits with a non-zero code when something failed.
+
+`eduneon-dc logout` (and _Log Out_ in the desktop app) removes the API token **and** the directory's password
+or key: set it again before you log in and sync. When Cockpit rejects a revoked or expired token, the
+connector logs out by itself and keeps the directory's password for the next login.
+
+`eduneon-dc forget` deletes everything the connector keeps in the keychain for its data folder (the API token
+and every directory's password or key), logged in or not: before you uninstall it or hand the machine on. It
+asks first; `--yes` skips the question (needed without a terminal). The settings stay. It can only find the
+entries the current settings name: an entry left by an earlier version for a server or account you changed
+before is removed in the system's keychain app (Keychain Access, Credential Manager, Seahorse), under the
+name `Eduneon Directory Connector`.
 
 ### 5. Sync on a schedule
 
@@ -208,6 +239,14 @@ eduneon-dc config import settings.json   # on the new server; then set the passw
 
 `EDUNEON_DC_APPDATA_DIR` moves the settings; `eduneon-dc data-file` prints where they are.
 
+The keychain entries belong to a data folder. The default folder above, which the desktop app and the CLI
+share, keeps them under the name `Eduneon Directory Connector`. Any other folder (`EDUNEON_DC_APPDATA_DIR`,
+or the portable `eduneon-connector-appdata` folder) has entries of its own, named
+`Eduneon Directory Connector (<id>)` with an id taken from the folder's path, so two folders never share a
+token. Nothing is copied between the names: a setup that used `EDUNEON_DC_APPDATA_DIR` with the keychain
+before this version logs in again and sets the directory password again (`sync` says so). With
+`EDUNEON_DC_PLAINTEXT_SECRETS=true` the secrets stay in that folder's settings file, as before.
+
 ### Environment variables
 
 | Variable                       | Purpose                                                                                      |
@@ -216,7 +255,7 @@ eduneon-dc config import settings.json   # on the new server; then set the passw
 | `EDUNEON_DC_DIRECTORY_ID`      | Cockpit directory ID, only when the organization has several Directory Connector directories |
 | `EDUNEON_DC_ORGANIZATION_ID`   | Cockpit organization ID, only when the API token's account belongs to several organizations  |
 | `EDUNEON_DC_SERVER_URL`        | Pins the Cockpit server, overriding `config server`                                          |
-| `EDUNEON_DC_APPDATA_DIR`       | Where settings are stored                                                                    |
+| `EDUNEON_DC_APPDATA_DIR`       | Where settings are stored; another folder also gets keychain entries of its own              |
 | `EDUNEON_DC_PLAINTEXT_SECRETS` | `true` keeps secrets in the settings file instead of the OS keychain                         |
 | `EDUNEON_DC_NOINTERACTION`     | `true` never prompts for input                                                               |
 | `EDUNEON_DC_DEBUG`             | `true` enables debug logging                                                                 |

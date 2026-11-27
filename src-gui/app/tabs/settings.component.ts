@@ -21,7 +21,7 @@ import { GSuiteConfiguration } from "@/libs/models/gsuiteConfiguration";
 import { LdapConfiguration } from "@/libs/models/ldapConfiguration";
 import { OktaConfiguration } from "@/libs/models/oktaConfiguration";
 import { OneLoginConfiguration } from "@/libs/models/oneLoginConfiguration";
-import { SyncConfiguration } from "@/libs/models/syncConfiguration";
+import { ldapUnusedFilters, SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { ConnectorUtils } from "@/libs/utils";
 import { applyLdapHostInput, parsePort } from "@/libs/utils/ldapHost";
 import { clampSyncInterval } from "@/libs/utils/syncInterval";
@@ -128,10 +128,15 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.platformUtilsService.showToast("success", null, this.i18nService.t("settingsSaved"));
   }
 
+  /** Filters an earlier version saved for LDAP, by their labels: an LDAP sync never used them. */
+  ldapUnusedFilters = computed(() =>
+    this.directory() === DirectoryType.Ldap
+      ? ldapUnusedFilters(this.sync()).map((field) => this.i18nService.t(field))
+      : [],
+  );
+
   userFilterHelp = computed(() => {
     switch (this.directory()) {
-      case DirectoryType.Ldap:
-        return this.i18nService.t("userFilterHelpLdap");
       case DirectoryType.EntraID:
         return this.i18nService.t("userFilterHelpEntraId");
       case DirectoryType.Okta:
@@ -158,7 +163,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
     }
     // An emptied or too short interval would stop the schedule without a word.
     sync.interval = clampSyncInterval(sync.interval);
-    ConnectorUtils.adjustConfigForSave(ldap, sync);
+    // With LDAP, this also removes the filters an earlier version saved (see ldapUnusedFilters).
+    ConnectorUtils.adjustConfigForSave(ldap, sync, this.directory());
     if (ldap != null && ldap.ad) {
       ldap.pagedSearch = true;
     }
