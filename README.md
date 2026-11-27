@@ -125,6 +125,7 @@ eduneon-dc sync
 
 PowerShell: `$env:EDUNEON_DC_API_TOKEN = "<token>"; $env:EDUNEON_DC_DIRECTORY_ID = "<id>"; eduneon-dc login`.
 The directory ID is only needed when the organization has more than one Directory Connector directory.
+When the API token's account belongs to several organizations, also set `EDUNEON_DC_ORGANIZATION_ID` to the one to sync into.
 
 The first sync only delivers the directory to Cockpit: the admin chooses there what to import and runs the
 first import. From then on every sync is applied at once, and `sync` prints what Cockpit created,
@@ -213,6 +214,7 @@ eduneon-dc config import settings.json   # on the new server; then set the passw
 | ------------------------------ | -------------------------------------------------------------------------------------------- |
 | `EDUNEON_DC_API_TOKEN`         | Cockpit API token for `eduneon-dc login`                                                     |
 | `EDUNEON_DC_DIRECTORY_ID`      | Cockpit directory ID, only when the organization has several Directory Connector directories |
+| `EDUNEON_DC_ORGANIZATION_ID`   | Cockpit organization ID, only when the API token's account belongs to several organizations  |
 | `EDUNEON_DC_SERVER_URL`        | Pins the Cockpit server, overriding `config server`                                          |
 | `EDUNEON_DC_APPDATA_DIR`       | Where settings are stored                                                                    |
 | `EDUNEON_DC_PLAINTEXT_SECRETS` | `true` keeps secrets in the settings file instead of the OS keychain                         |

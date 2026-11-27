@@ -612,6 +612,10 @@
     "message": "Show / Hide",
     "description": "Text for a button that toggles the visibility of the window. Shows the window when it is hidden or hides the window if it is currently open."
   },
+  "toggleVisibility": {
+    "message": "Show or hide",
+    "description": "Tooltip of the eye button beside a password or key field: shows the value or hides it again."
+  },
   "hideToTray": {
     "message": "Hide to Tray"
   },
