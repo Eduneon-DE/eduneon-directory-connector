@@ -7,6 +7,7 @@ import { DirectoryEntry, DirectorySyncResponse } from "@/libs/models/cockpit";
 import { GroupEntry } from "@/libs/models/groupEntry";
 import { SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { UserEntry } from "@/libs/models/userEntry";
+import { normalizeDn } from "@/libs/utils/dn";
 
 import { DirectorySnapshot, IDirectoryService } from "./directory-services/directory.service";
 
@@ -25,6 +26,8 @@ export interface SyncOutcome {
   status: DirectorySyncResponse["status"];
   directory: string;
   received: number;
+  /** Entries this connector sent, all parts together. */
+  sent?: number;
   message: string;
   /** Cockpit took the upload but some entries need an admin there: shown as a warning, not as a failed sync. */
   needsAttention: boolean;
@@ -108,7 +111,7 @@ export class SyncService {
       }
 
       const snapshot = await SyncService.snapshotOf(directoryService, dirType, groups, users);
-      if (snapshot.entries.length === 0) {
+      if (SyncService.entriesBelowBase(snapshot).length === 0) {
         throw new Error(
           "The directory returned no entries, so nothing was sent to Cockpit. " +
             "Check the directory settings (an empty sync would deactivate everyone).",
@@ -116,7 +119,7 @@ export class SyncService {
       }
 
       const result = await this.upload(snapshot);
-      const outcome = SyncService.outcomeOf(result);
+      const outcome = { ...SyncService.outcomeOf(result), sent: snapshot.entries.length };
       if (!outcome.refused) {
         await this.saveSyncTimes(syncConfig, now);
       }
@@ -153,6 +156,19 @@ export class SyncService {
       received: result?.received ?? 0,
     };
     const inProgress = issues.find((i) => i.code === SYNC_IN_PROGRESS);
+    if (result?.status === "refused" && inProgress == null) {
+      // Not imported now (the directory is switched off, uploads are not allowed, …): no completed
+      // sync, so the sync time is not saved and the next check sends the directory again.
+      const reasons = issues.filter((i) => i.severity === "error" || i.severity === "warning");
+      return {
+        ...base,
+        needsAttention: true,
+        refused: true,
+        message:
+          `Cockpit did not import this upload to "${base.directory}".` +
+          (reasons.length > 0 ? `\n${reasons.map((i) => `• ${i.message}`).join("\n")}` : ""),
+      };
+    }
     if (inProgress != null) {
       return {
         ...base,
@@ -201,9 +217,39 @@ export class SyncService {
         ...(part === 0 && snapshot.objectClasses?.length
           ? { objectClasses: snapshot.objectClasses }
           : {}),
+        ...(part === 0 && snapshot.unfollowedReferrals?.length
+          ? { unfollowedReferrals: snapshot.unfollowedReferrals }
+          : {}),
       });
+      if (typeof result?.status !== "string" || result.provider == null) {
+        // JSON, but not Cockpit's answer (another API at this URL, a proxy's own reply).
+        throw new Error(
+          "The server did not answer like Cockpit: its reply to the upload has no status. Check the server URL.",
+        );
+      }
+    }
+    // "receiving" means "part stored, send the next one". As the answer to the last part it means
+    // Cockpit did not put the upload together (another upload of the directory replaced its
+    // parts): nothing was imported, so this is no completed sync.
+    if (result?.status === "receiving") {
+      throw new Error(
+        "Cockpit did not complete this upload: another upload of the same directory ran at the same time. " +
+          "Nothing was imported; sync again once the other upload has finished.",
+      );
     }
     return result;
+  }
+
+  /**
+   * Entries other than the base entry itself: an LDAP read of an empty OU still returns the OU,
+   * and that alone is no directory to send.
+   */
+  static entriesBelowBase(snapshot: DirectorySnapshot): DirectorySnapshot["entries"] {
+    const base = normalizeDn(snapshot.baseDn ?? "");
+    if (base === "") {
+      return snapshot.entries;
+    }
+    return snapshot.entries.filter((e) => normalizeDn(e.dn) !== base);
   }
 
   /**
@@ -243,6 +289,9 @@ export class SyncService {
         "They are stored in Cockpit; nothing was imported. Start the import in Cockpit (Platform → Authentication), " +
         'or switch on "Import each upload automatically" there.'
       );
+    }
+    if (result?.status === "importing") {
+      return `Uploaded ${result.received} entries. Cockpit is importing them now; see the result in Cockpit.`;
     }
     if (result?.status === "awaiting-setup") {
       return (
@@ -302,14 +351,16 @@ export class SyncService {
         : [[], []];
     const snapshot = await SyncService.snapshotOf(directoryService, dirType, groups, users);
     const counts = new Map<string, number>();
-    for (const entry of snapshot.entries) {
+    // The base entry is read too, but it is not part of the directory below it.
+    const below = SyncService.entriesBelowBase(snapshot);
+    for (const entry of below) {
       const classes = (entry.attributes.objectclass ?? []).filter((c) => c.toLowerCase() !== "top");
       const objectClass = classes[classes.length - 1] ?? "(none)";
       counts.set(objectClass, (counts.get(objectClass) ?? 0) + 1);
     }
     return {
       baseDn: snapshot.baseDn,
-      total: snapshot.entries.length,
+      total: below.length,
       byClass: [...counts.entries()]
         .map(([objectClass, count]) => ({ objectClass, count }))
         .sort((a, b) => b.count - a.count),

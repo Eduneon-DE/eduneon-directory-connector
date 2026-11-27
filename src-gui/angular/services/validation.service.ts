@@ -11,7 +11,8 @@ export class ValidationService {
     private platformUtilsService: PlatformUtilsService,
   ) {}
 
-  showError(data: any): string[] {
+  /** @param title what failed, as the toast's heading; without one the toast has none. */
+  showError(data: any, title: string = null): string[] {
     const defaultErrorMessage = this.i18nService.t("unexpectedError");
     let errors: string[] = [];
 
@@ -26,11 +27,9 @@ export class ValidationService {
     }
 
     if (errors.length === 1) {
-      this.platformUtilsService.showToast("error", this.i18nService.t("errorOccurred"), errors[0]);
+      this.platformUtilsService.showToast("error", title, errors[0]);
     } else if (errors.length > 1) {
-      this.platformUtilsService.showToast("error", this.i18nService.t("errorOccurred"), errors, {
-        timeout: 5000 * errors.length,
-      });
+      this.platformUtilsService.showToast("error", title, errors);
     }
 
     return errors;

@@ -16,6 +16,7 @@ import { LogoutCommand } from "./commands/logout.command";
 import { SyncCommand } from "./commands/sync.command";
 import { TestCommand } from "./commands/test.command";
 import { Main } from "./eduneon-dc";
+import { configFileLock } from "./services/node/configLock";
 
 const writeLn = (s: string, finalLine = false, error = false) => {
   const stream = error ? process.stderr : process.stdout;
@@ -218,6 +219,7 @@ export class Program extends BaseProgram {
           this.main.i18nService,
           this.main.stateService,
           this.main.environmentService,
+          configFileLock(this.main.dataFilePath),
         );
         const response = await command.run(setting, value, options);
         this.processResponse(response);

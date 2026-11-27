@@ -138,7 +138,7 @@
     "message": "Server URL"
   },
   "environmentSaved": {
-    "message": "The environment URLs have been saved."
+    "message": "Server address saved."
   },
   "ok": {
     "message": "Ok"
@@ -739,6 +739,15 @@
   "errorOccurred": {
     "message": "An error has occurred."
   },
+  "syncFailed": {
+    "message": "Sync failed"
+  },
+  "testFailed": {
+    "message": "Test failed"
+  },
+  "loginFailed": {
+    "message": "Login failed"
+  },
   "error": {
     "message": "Error"
   },
@@ -846,6 +855,21 @@
   },
   "ldapErrorNoSuchObject": {
     "message": "The root path was not found on the directory server. Check \"Root Path\"."
+  },
+  "ldapErrorInvalidDn": {
+    "message": "A DN in the settings is not written as a DN (for example ou=people,dc=school,dc=local). Check \"Root Path\" and \"Username\"."
+  },
+  "ldapErrorSizeLimit": {
+    "message": "The directory server stopped the read at its size limit for this user. Give the bind user a higher size limit on the server (OpenLDAP: limits in the database config), or bind as a user without one."
+  },
+  "ldapErrorInsufficientAccess": {
+    "message": "The bind user is not allowed to read this part of the directory. Give it read access on the server, or check \"Username\"."
+  },
+  "ldapErrorEncryptionRequired": {
+    "message": "The directory server only accepts encrypted connections. Switch on LDAPS (port 636) or StartTLS."
+  },
+  "ldapErrorTimeLimit": {
+    "message": "The directory server stopped the read at its time limit. Raise the time limit on the server, or set a root path that covers less."
   },
   "organizationId": {
     "message": "Organization ID (optional)"

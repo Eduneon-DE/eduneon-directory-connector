@@ -87,10 +87,14 @@ export class ConnectorUtils {
     }
 
     if (sync.interval != null) {
-      if (sync.interval <= 0) {
+      // A value that is no number ("abc" from an edited file) would leave the schedule on but never due.
+      const interval = Number(sync.interval);
+      if (!Number.isFinite(interval) || interval <= 0) {
         sync.interval = null;
-      } else if (sync.interval < 5) {
+      } else if (interval < 5) {
         sync.interval = 5;
+      } else {
+        sync.interval = interval;
       }
     }
   }

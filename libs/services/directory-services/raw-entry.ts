@@ -28,10 +28,20 @@ const SECRET_ATTRIBUTES = new Set([
   "authpassword",
 ]);
 
+/**
+ * Name patterns of secret attributes: the same list Cockpit strips on arrival (SECRET_ATTR in
+ * apps/cockpit-api directory-sync.ldap.ts), so nothing Cockpit would throw away leaves the network.
+ * Covers private keys (pKCS8PrivateKey, userPKCS12), hashes (ipaNTHash, krbPwdHistory), Kerberos and
+ * OTP keys (krbMKey, ipatokenOTPkey), TPM and BitLocker data, config passwords (olcRootPW), and any
+ * attribute named by its OID ("2.5.4.35" is userPassword), whose meaning cannot be told from the name.
+ */
+const SECRET_PATTERN =
+  /password|pwd|secret|rootpw|krb5key|krbprincipalkey|krbmkey|unicodepwd|nthash|lmhash|sambantpassword|sambalmpassword|pwhistory|pkcs8|pkcs12|usercertificate|privatekey|supplementalcredentials|msfve-|keycredentiallink|mstpm-owner|otpkey|trustauth|initialauth|peklist|currentvalue|priorvalue|mspkiaccountcredentials|mspkidpapimasterkeys|^\s*(?:oid\.)?\d+(?:\.\d+)+\s*(?:;|$)/i;
+
 /** True for attributes that must not leave the customer's network. */
 export function isSecretAttribute(name: string): boolean {
   const key = name.toLowerCase().split(";")[0];
-  return SECRET_ATTRIBUTES.has(key) || key.includes("password");
+  return SECRET_ATTRIBUTES.has(key) || SECRET_PATTERN.test(key);
 }
 
 type RawValue = string | number | boolean | Buffer | Uint8Array | null | undefined;
@@ -55,8 +65,16 @@ function toStrings(value: RawValue | RawValue[]): string[] {
   return out;
 }
 
-/** Binary attributes that are sent anyway (base64): they identify an entry. */
-const KEPT_BINARY_ATTRIBUTES = new Set(["objectguid", "objectsid"]);
+/**
+ * Binary attributes that are sent anyway (base64): they identify an entry. The same list as
+ * Cockpit's BINARY_ATTRIBUTES, so an id reads the same through the connector as over LDAP.
+ */
+const KEPT_BINARY_ATTRIBUTES = new Set([
+  "objectguid",
+  "objectsid",
+  "guid",
+  "ms-ds-consistencyguid",
+]);
 
 /**
  * Photos, certificates and other binary attributes. They are left out: no Cockpit mapping uses
@@ -104,7 +122,8 @@ export function fromLdapEntry(
   entry: Record<string, unknown> & { dn: string },
   limits?: ReadLimits,
 ): DirectoryEntry {
-  const attributes: Record<string, string[]> = {};
+  // No prototype: an attribute named "constructor" or "__proto__" is an attribute like any other.
+  const attributes: Record<string, string[]> = Object.create(null);
   for (const [name, value] of Object.entries(entry)) {
     if (name === "dn" || isSecretAttribute(name)) {
       continue;
@@ -148,7 +167,10 @@ export function fromObject(
   source: Record<string, unknown>,
   extra: Record<string, string[]> = {},
 ): DirectoryEntry {
-  const attributes: Record<string, string[]> = { objectclass: objectClass };
+  // No prototype: a property named "constructor" or "__proto__" is an attribute like any other.
+  const attributes: Record<string, string[]> = Object.assign(Object.create(null), {
+    objectclass: objectClass,
+  });
   const add = (name: string, values: string[]) => {
     if (values.length === 0) {
       return;

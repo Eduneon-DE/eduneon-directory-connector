@@ -62,3 +62,20 @@ describe("ConnectorUtils", () => {
     });
   });
 });
+
+// conn-38: an interval that is no number left the schedule on but never due.
+describe("ConnectorUtils.adjustConfigForSave interval", () => {
+  it.each([
+    ["abc", null],
+    [{ a: 1 }, null],
+    [0, null],
+    [-3, null],
+    [3, 5],
+    ["15", 15],
+    [10, 10],
+  ])("saves the interval %p as %p", (interval, saved) => {
+    const sync: any = { interval };
+    ConnectorUtils.adjustConfigForSave({} as any, sync);
+    expect(sync.interval).toBe(saved);
+  });
+});

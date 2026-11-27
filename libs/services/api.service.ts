@@ -19,6 +19,14 @@ import { Utils } from "@/libs/utils/utils";
 const INVALID_TOKEN_MESSAGES = ["Invalid or expired API token", "User not found in system"];
 const INVALID_TOKEN_CODE = "INVALID_API_TOKEN";
 
+/** Cockpit's 403 answers that only say "no permission" (CASL guards), lowercase. */
+const GENERIC_FORBIDDEN_MESSAGES = [
+  "forbidden resource",
+  "forbidden",
+  "access denied !!!",
+  "access denied",
+];
+
 /** How long a request may wait for Cockpit's answer. The last part of an upload runs the import, so it gets longer. */
 export const REQUEST_TIMEOUT_MS = 30 * 1000;
 export const SYNC_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -128,8 +136,12 @@ export class ApiService implements ApiServiceAbstraction {
           `Cockpit at ${apiUrl} did not answer within ${timeoutMs / 1000} seconds. Check the server URL and the network, then try again.`,
         );
       }
+      // Node's fetch says only "fetch failed"; why (refused, DNS, reset, certificate) is its cause.
+      const cause = (e as { cause?: { message?: string; code?: string } })?.cause;
+      const why = cause?.message || cause?.code;
       throw new Error(
-        `Could not reach Cockpit at ${apiUrl}: ${e instanceof Error ? e.message : String(e)}`,
+        `Could not reach Cockpit at ${apiUrl}: ${e instanceof Error ? e.message : String(e)}` +
+          (why ? ` (${why})` : ""),
       );
     }
 
@@ -206,6 +218,12 @@ export class ApiService implements ApiServiceAbstraction {
       };
     }
     if (response.status === 403) {
+      // Cockpit's own reason (a directory id this token cannot open, a disabled feature) says what to
+      // fix; only its generic "no permission" answers mean the service account lacks the role.
+      const reason = typeof json?.message === "string" ? json.message.trim() : "";
+      if (reason !== "" && !GENERIC_FORBIDDEN_MESSAGES.includes(reason.toLowerCase())) {
+        return { message: reason };
+      }
       return {
         message:
           "The API token's account is not allowed to manage directories in Cockpit. Give the service account a role that can edit identity providers.",

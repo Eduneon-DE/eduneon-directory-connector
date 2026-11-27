@@ -31,7 +31,12 @@
         <strong class="text-muted">{{ "automaticSyncOff" | i18n }}</strong>
       }
     </p>
-    <form #startForm="appApiAction" [appApiAction]="startPromise()" class="d-inline">
+    <form
+      #startForm="appApiAction"
+      [appApiAction]="startPromise()"
+      [appApiActionTitle]="'syncFailed' | i18n"
+      class="d-inline"
+    >
       <button
         type="button"
         (click)="start()"
@@ -45,7 +50,12 @@
     <button type="button" (click)="stop()" class="btn btn-danger text-white">
       {{ "stopSync" | i18n }}
     </button>
-    <form #syncForm="appApiAction" [appApiAction]="syncPromise()" class="d-inline">
+    <form
+      #syncForm="appApiAction"
+      [appApiAction]="syncPromise()"
+      [appApiActionTitle]="'syncFailed' | i18n"
+      class="d-inline"
+    >
       <button
         type="button"
         (click)="sync()"
@@ -61,7 +71,12 @@
   <h3 class="card-header">{{ "testing" | i18n }}</h3>
   <div class="card-body">
     <p>{{ "testingDesc" | i18n }}</p>
-    <form #simForm="appApiAction" [appApiAction]="simPromise()" class="d-inline">
+    <form
+      #simForm="appApiAction"
+      [appApiAction]="simPromise()"
+      [appApiActionTitle]="'testFailed' | i18n"
+      class="d-inline"
+    >
       <button
         type="button"
         (click)="simulate()"

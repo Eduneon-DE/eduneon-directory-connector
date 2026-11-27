@@ -70,7 +70,7 @@ export class ApiKeyComponent {
     if (apiToken === "") {
       this.platformUtilsService.showToast(
         "error",
-        this.i18nService.t("errorOccurred"),
+        this.i18nService.t("loginFailed"),
         this.i18nService.t("apiTokenRequired"),
       );
       return;

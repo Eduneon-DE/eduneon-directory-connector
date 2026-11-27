@@ -21,6 +21,8 @@ import { unwrapIpcError } from "@/src-gui/angular/utils/unwrap-ipc-error";
 })
 export class ApiActionDirective implements OnChanges {
   @Input() appApiAction: Promise<any>;
+  /** Heading of the error toast: what failed ("Sync failed"), instead of a generic one. */
+  @Input() appApiActionTitle: string;
 
   private validationService = inject(ValidationService);
   private logService = inject(LogService);
@@ -28,6 +30,10 @@ export class ApiActionDirective implements OnChanges {
   loading = signal(false);
 
   ngOnChanges(changes: any) {
+    // Only a new promise is a new action: a changed heading must not show its error twice.
+    if (changes.appApiAction == null) {
+      return;
+    }
     if (this.appApiAction == null || this.appApiAction.then == null) {
       return;
     }
@@ -47,7 +53,7 @@ export class ApiActionDirective implements OnChanges {
           return;
         }
         this.logService?.error(`Received API exception: ${e.message ?? e}`);
-        this.validationService.showError(e);
+        this.validationService.showError(e, this.appApiActionTitle);
       },
     );
   }

@@ -50,7 +50,10 @@ describe("MessagingMain sync schedule", () => {
       sync: async () => {
         syncs++;
         const result = await syncImpl();
-        store.lastSync = new Date();
+        // A refused upload is no completed sync: SyncService saves no time for it.
+        if (!result?.[2]?.refused) {
+          store.lastSync = new Date();
+        }
         return result;
       },
     };
@@ -116,15 +119,35 @@ describe("MessagingMain sync schedule", () => {
     expect(syncs).toBe(0);
   });
 
-  it("keeps checking after a failed sync", async () => {
+  // conn-37
+  it("keeps trying after a failed sync, waiting longer each time up to the interval", async () => {
     syncImpl = async () => {
       throw new Error("LDAP server down");
     };
     main.onMessage({ command: "scheduleNextDirSync" });
 
-    await minutes(3);
+    await minutes(10);
+    // Minutes 1, 2 (1 later), 4 (2 later), 8 (4 later); then every 5 minutes, the interval.
+    expect(syncs).toBe(4);
+    await minutes(5);
+    expect(syncs).toBe(5);
 
-    expect(syncs).toBe(3); // the failed sync saved no time: every check tries again
+    syncImpl = async () => [[], [], null];
+    await minutes(5);
+    expect(syncs).toBe(6); // minute 18 worked: back to the interval from the last sync
+    await minutes(2);
+    expect(syncs).toBe(6);
+    await minutes(1);
+    expect(syncs).toBe(7); // minute 23
+  });
+
+  it("waits the same way when Cockpit refuses the upload (another import is running)", async () => {
+    syncImpl = async () => [[], [], { refused: true }];
+    main.onMessage({ command: "scheduleNextDirSync" });
+
+    await minutes(10);
+
+    expect(syncs).toBe(4);
   });
 
   it("does not sync with an unusable interval, and resumes once a valid one is saved", async () => {

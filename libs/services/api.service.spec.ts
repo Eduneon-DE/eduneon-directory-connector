@@ -115,6 +115,38 @@ describe("ApiService", () => {
     );
   });
 
+  // conn-23
+  it.each([
+    ["connect ECONNREFUSED 127.0.0.1:5000", "ECONNREFUSED"],
+    ["getaddrinfo ENOTFOUND cockpit.invalid", "ENOTFOUND"],
+    ["read ECONNRESET", "ECONNRESET"],
+  ])("says why the server could not be reached: %s", async (message, code) => {
+    sut.next = () => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error(message), { code }),
+      });
+    };
+
+    await expect(sut.getConnectorStatus("t")).rejects.toThrow(`fetch failed (${message})`);
+  });
+
+  // conn-25
+  it("shows Cockpit's reason for a 403 when it gives a specific one", async () => {
+    const reason =
+      "This IdentityProvider (providerId 875) is not one you can open, so it cannot be linked here.";
+    sut.next = () => json(403, { statusCode: 403, message: reason });
+
+    await expect(sut.getConnectorStatus("t")).rejects.toMatchObject({ message: reason });
+  });
+
+  it("explains a generic 403 as a missing role", async () => {
+    sut.next = () => json(403, { statusCode: 403, message: "Forbidden resource" });
+
+    await expect(sut.getConnectorStatus("t")).rejects.toMatchObject({
+      message: expect.stringContaining("Give the service account a role"),
+    });
+  });
+
   it("still says to log in again when clearing the rejected token fails", async () => {
     sut.next = () => json(401, { statusCode: 401, message: "Invalid or expired API token" });
     logout.mockRejectedValue(new Error("Failed to clear 1 auth token(s): accessToken"));

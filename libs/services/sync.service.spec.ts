@@ -317,6 +317,143 @@ describe("SyncService", () => {
     });
   });
 
+  // conn-1: two uploads of one directory at once replace each other's parts in Cockpit.
+  it("fails when Cockpit answers the last part with 'receiving': the upload was never put together", async () => {
+    const entries = Array.from({ length: UPLOAD_CHUNK_SIZE + 1 }, (_, i) => ({
+      dn: `uid=u${i},dc=x`,
+      attributes: { uid: [`u${i}`] },
+    }));
+    directory.readSnapshot.mockResolvedValue({ baseDn: "dc=x", entries });
+    apiService.postDirectorySync.mockResolvedValue({
+      ...okResponse,
+      status: "receiving",
+      received: 1,
+      mappings: [],
+    });
+
+    await expect(syncService.sync(false, false)).rejects.toThrow(
+      "Cockpit did not complete this upload",
+    );
+
+    expect(stateService.setLastUserSync).not.toHaveBeenCalled();
+    expect(stateService.setLastGroupSync).not.toHaveBeenCalled();
+    expect(messagingService.send).toHaveBeenLastCalledWith(
+      "dirSyncCompleted",
+      expect.objectContaining({ successfully: false }),
+    );
+  });
+
+  it("counts the entries it sent, not Cockpit's count for the last part", async () => {
+    const entries = Array.from({ length: UPLOAD_CHUNK_SIZE + 1 }, (_, i) => ({
+      dn: `uid=u${i},dc=x`,
+      attributes: { uid: [`u${i}`] },
+    }));
+    directory.readSnapshot.mockResolvedValue({ baseDn: "dc=x", entries });
+    apiService.postDirectorySync.mockResolvedValue({ ...okResponse, received: 1 });
+
+    const [, , outcome] = await syncService.sync(false, false);
+
+    expect(outcome.sent).toBe(UPLOAD_CHUNK_SIZE + 1);
+  });
+
+  // Follow-up: Cockpit's background import and its refusals.
+  it("says Cockpit is importing an upload it queued as a background job", async () => {
+    apiService.postDirectorySync.mockResolvedValue({
+      ...okResponse,
+      status: "importing",
+      received: 4,
+      mappings: [],
+    });
+
+    const [, , outcome] = await syncService.sync(false, false);
+
+    expect(outcome.message).toBe(
+      "Uploaded 4 entries. Cockpit is importing them now; see the result in Cockpit.",
+    );
+    expect(outcome.needsAttention).toBe(false);
+    expect(stateService.setLastUserSync).toHaveBeenCalled();
+  });
+
+  it("treats a 'refused' answer as a refusal: the reason is shown and no sync time saved", async () => {
+    apiService.postDirectorySync.mockResolvedValue({
+      ...okResponse,
+      status: "refused",
+      mappings: [],
+      issues: [
+        {
+          targetModel: "",
+          severity: "error",
+          code: "provider-disabled",
+          message: "This directory is switched off in Cockpit.",
+        },
+      ],
+    });
+
+    const [, , outcome] = await syncService.sync(false, false);
+
+    expect(outcome.refused).toBe(true);
+    expect(outcome.message).toContain("This directory is switched off in Cockpit.");
+    expect(outcome.message).not.toContain("no mapping is enabled");
+    expect(stateService.setLastUserSync).not.toHaveBeenCalled();
+    expect(messagingService.send).toHaveBeenLastCalledWith(
+      "dirSyncCompleted",
+      expect.objectContaining({ successfully: false }),
+    );
+  });
+
+  // conn-24
+  it.each([[null], [{ ok: true }]])(
+    "fails with a clear message when the answer is not Cockpit's: %p",
+    async (answer) => {
+      apiService.postDirectorySync.mockResolvedValue(answer as unknown as DirectorySyncResponse);
+
+      await expect(syncService.sync(false, false)).rejects.toThrow(
+        "The server did not answer like Cockpit",
+      );
+      expect(stateService.setLastUserSync).not.toHaveBeenCalled();
+    },
+  );
+
+  // conn-11
+  it("tells Cockpit about referrals the read did not follow, with the first part", async () => {
+    directory.readSnapshot.mockResolvedValue({
+      baseDn: "dc=x",
+      entries: [alice],
+      unfollowedReferrals: ["ldap://other.test/ou=elsewhere,dc=x"],
+    });
+
+    await syncService.sync(false, false);
+
+    expect(apiService.postDirectorySync).toHaveBeenCalledWith(
+      expect.objectContaining({ unfollowedReferrals: ["ldap://other.test/ou=elsewhere,dc=x"] }),
+    );
+  });
+
+  // conn-34: an LDAP read of an empty OU returns the OU itself.
+  it("refuses to push a read that holds only the base entry", async () => {
+    directory.readSnapshot.mockResolvedValue({
+      baseDn: "ou=Empty,dc=x",
+      entries: [{ dn: "OU=empty, DC=x", attributes: { objectclass: ["organizationalUnit"] } }],
+    });
+
+    await expect(syncService.sync(false, false)).rejects.toThrow("returned no entries");
+    expect(apiService.postDirectorySync).not.toHaveBeenCalled();
+  });
+
+  it("does not count the base entry in a test read", async () => {
+    directory.readSnapshot.mockResolvedValue({
+      baseDn: "ou=empty,dc=x",
+      entries: [
+        { dn: "ou=empty,dc=x", attributes: { objectclass: ["top", "organizationalUnit"] } },
+      ],
+    });
+
+    const preview = await syncService.preview();
+
+    expect(preview.total).toBe(0);
+    expect(preview.byClass).toEqual([]);
+  });
+
   it("builds entries itself for directories without a raw snapshot", () => {
     const g = new GroupEntry();
     g.referenceId = "g1";

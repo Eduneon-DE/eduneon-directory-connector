@@ -91,6 +91,11 @@ export class AppComponent implements OnInit {
       );
       options.enableHtml = true;
     }
+    if (msg.type === "error") {
+      // An error is read, maybe copied: it stays until it is closed (a click, or the close button).
+      options.disableTimeOut = true;
+      options.closeButton = true;
+    }
     if (msg.options != null) {
       if (msg.options.trustedHtml === true) {
         options.enableHtml = true;

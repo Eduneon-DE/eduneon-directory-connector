@@ -167,4 +167,12 @@ if [ "$APP" = 1 ]; then
 fi
 
 say ""
-say "Next: eduneon-dc login   (with a Cockpit API token, see Platform → Service accounts)"
+if [ "$APP" = 1 ]; then
+  # The desktop app logs in and syncs on its own; the CLI is there for scripts.
+  case "$PLATFORM" in
+    macos) say "Next: open Eduneon Directory Connector from Applications (or Launchpad)." ;;
+    linux) say "Next: start the desktop app: $BIN_DIR/eduneon-directory-connector" ;;
+  esac
+else
+  say "Next: eduneon-dc login   (with a Cockpit API token, see Platform → Service accounts)"
+fi

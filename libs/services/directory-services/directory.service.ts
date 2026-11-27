@@ -9,6 +9,11 @@ export interface DirectorySnapshot {
   entries: DirectoryEntry[];
   /** The directory's objectClass definitions (RFC 4512), when it publishes them (LDAP). */
   objectClasses?: string[];
+  /**
+   * Referrals the read did not follow (LDAP): entries beneath them are missing from the snapshot,
+   * so Cockpit must not read their absence as "gone from the directory".
+   */
+  unfollowedReferrals?: string[];
 }
 
 export interface IDirectoryService {

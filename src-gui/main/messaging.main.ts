@@ -25,6 +25,13 @@ export class MessagingMain {
    * was already running when Stop was pressed cannot switch the schedule back on.
    */
   private syncGeneration = 0;
+  /**
+   * Scheduled syncs that failed (or Cockpit refused) in a row, and when the last one was tried. A
+   * failed sync saves no sync time, so without this every check (each minute) would read and send
+   * the whole directory again while the server is down.
+   */
+  private failedSyncs = 0;
+  private lastFailedSyncAt = 0;
 
   constructor(
     private windowMain: WindowMain,
@@ -104,9 +111,15 @@ export class MessagingMain {
   private async checkDirSync(generation: number) {
     try {
       if (await this.isSyncDue()) {
-        await this.syncService.sync(false, false);
+        const [, , outcome] = await this.syncService.sync(false, false);
+        if (outcome?.refused) {
+          this.noteFailedSync();
+        } else {
+          this.failedSyncs = 0;
+        }
       }
     } catch (e) {
+      this.noteFailedSync();
       this.logService.error(`Scheduled sync failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       // Stop was pressed while this check ran: stay stopped.
@@ -116,11 +129,23 @@ export class MessagingMain {
     }
   }
 
+  private noteFailedSync() {
+    this.failedSyncs++;
+    this.lastFailedSyncAt = Date.now();
+  }
+
   private async isSyncDue(): Promise<boolean> {
     const syncConfig = await this.stateService.getSync();
     if (!isValidSyncInterval(syncConfig?.interval)) {
       // Nothing to go by until a valid interval is saved; the next check reads it again.
       return false;
+    }
+    if (this.failedSyncs > 0) {
+      // After a failure try again soon, then wait longer each time: 1, 2, 4, … minutes, at most the interval.
+      const wait = Math.min(syncConfig.interval, 2 ** (this.failedSyncs - 1)) * 60000;
+      if (Date.now() - this.lastFailedSyncAt < wait) {
+        return false;
+      }
     }
     const lastSyncs = [
       await this.stateService.getLastGroupSync(),

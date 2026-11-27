@@ -75,7 +75,8 @@ export abstract class BaseProgram {
 
   protected getMessage(response: Response): string {
     const message = response.data as MessageResponse;
-    if (process.env.BW_RAW === "true") {
+    // Only some answers have a raw form (update's download URL); the others print as usual.
+    if (process.env.BW_RAW === "true" && message.raw != null) {
       return message.raw;
     }
 

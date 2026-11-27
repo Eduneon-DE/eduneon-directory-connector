@@ -5,6 +5,7 @@ import * as program from "commander";
 import { EnvironmentService, EnvironmentUrls } from "@/libs/abstractions/environment.service";
 import { I18nService } from "@/libs/abstractions/i18n.service";
 import { StateService } from "@/libs/abstractions/state.service";
+import { DEFAULT_SERVER_URL } from "@/libs/constants";
 import { DirectoryType } from "@/libs/enums/directoryType";
 import { EntraIdConfiguration } from "@/libs/models/entraIdConfiguration";
 import { GSuiteConfiguration } from "@/libs/models/gsuiteConfiguration";
@@ -15,6 +16,7 @@ import { SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { ConnectorUtils } from "@/libs/utils";
 import { applyLdapHostInput } from "@/libs/utils/ldapHost";
 import { NodeUtils } from "@/libs/utils/nodeUtils";
+import { MIN_SYNC_INTERVAL_MINUTES } from "@/libs/utils/syncInterval";
 
 import { Response } from "@/src-cli/models/response";
 import { MessageResponse } from "@/src-cli/models/response/messageResponse";
@@ -111,16 +113,26 @@ export const SETTINGS: Record<string, Setting> = {
     "sync",
     "userFilter",
     "text",
-    "Which users to read (directory-specific filter)",
+    "Which users to read (Entra ID, Google, Okta, OneLogin; LDAP sends the whole base DN)",
   ),
   "sync.groupfilter": s(
     "sync",
     "groupFilter",
     "text",
-    "Which groups to read (directory-specific filter)",
+    "Which groups to read (Entra ID, Google, Okta, OneLogin; LDAP sends the whole base DN)",
   ),
-  "sync.interval": s("sync", "interval", "number", "Minutes between syncs in the desktop app"),
-  "sync.removedisabled": s("sync", "removeDisabled", "boolean", "Leave out disabled users"),
+  "sync.interval": s(
+    "sync",
+    "interval",
+    "number",
+    "Minutes between syncs in the desktop app (at least 5; 0 switches it off)",
+  ),
+  "sync.removedisabled": s(
+    "sync",
+    "removeDisabled",
+    "boolean",
+    "Leave out disabled users (Entra ID, Google, Okta, OneLogin)",
+  ),
   "sync.overwriteexisting": s(
     "sync",
     "overwriteExisting",
@@ -132,9 +144,14 @@ export const SETTINGS: Record<string, Setting> = {
     "sync",
     "userPath",
     "text",
-    "Where users are, below the base DN (e.g. ou=people)",
+    "LDAP test view only: where users are, below the base DN (a sync sends the whole base DN)",
   ),
-  "sync.grouppath": s("sync", "groupPath", "text", "Where groups are, below the base DN"),
+  "sync.grouppath": s(
+    "sync",
+    "groupPath",
+    "text",
+    "LDAP test view only: where groups are, below the base DN (a sync sends the whole base DN)",
+  ),
   "sync.userobjectclass": s(
     "sync",
     "userObjectClass",
@@ -223,6 +240,16 @@ const SECTION_OF_DIRECTORY: Record<DirectoryType, Section> = {
 
 const SECTIONS: Section[] = ["ldap", "entra", "gsuite", "okta", "onelogin", "sync"];
 
+/**
+ * sync.* settings an LDAP sync does not use: it sends everything under the base DN, and Cockpit
+ * filters there. They only shape the user/group lists of `eduneon-dc test` and the app's test view
+ * (paths, object classes and attributes), or nothing at all on LDAP (filters, removeDisabled).
+ */
+const IGNORED_FOR_LDAP = new Set(["userFilter", "groupFilter", "removeDisabled"]);
+
+/** Holds a lock across one whole read-change-write of the settings (see run). */
+export type ConfigLock = <T>(action: () => Promise<T>) => Promise<T>;
+
 export class ConfigCommand {
   private directory: DirectoryType;
   private ldap = new LdapConfiguration();
@@ -236,9 +263,26 @@ export class ConfigCommand {
     private i18nService: I18nService,
     private stateService: StateService,
     private environmentService: EnvironmentService,
+    /**
+     * Every command reads all settings, changes one and writes all of them back: two at once (a
+     * setup script) would each write the other's change away. The CLI passes a file lock.
+     */
+    private lockConfig: ConfigLock = (action) => action(),
   ) {}
 
   async run(setting: string, value: string, options: program.OptionValues): Promise<Response> {
+    try {
+      return await this.lockConfig(() => this.runLocked(setting, value, options));
+    } catch (e) {
+      return Response.error(e);
+    }
+  }
+
+  private async runLocked(
+    setting: string,
+    value: string,
+    options: program.OptionValues,
+  ): Promise<Response> {
     const key = setting.toLowerCase();
     try {
       switch (key) {
@@ -266,28 +310,50 @@ export class ConfigCommand {
           `Unknown setting "${setting}". Run "eduneon-dc config --help" to see all settings.`,
         );
       }
-      const raw = await this.readValue(value, options, definition);
+      const raw = await this.readValue(value, options, definition, setting);
       await this.loadConfig();
       this.config(definition.section)[definition.field] = this.parse(raw, definition, setting);
       if (definition.section === "ldap" && definition.field === "hostname") {
         this.cleanLdapHostname();
       }
       await this.saveConfig();
-      return this.saved(setting);
+      return this.saved(setting, this.noteAbout(definition));
     } catch (e) {
       return Response.error(e);
     }
   }
 
-  private saved(what: string) {
-    return Response.success(new MessageResponse(this.i18nService.t("savedSetting", what), null));
+  private saved(what: string, note: string = null) {
+    return Response.success(new MessageResponse(this.i18nService.t("savedSetting", what), note));
+  }
+
+  /** What the saved value means, when it is not what the admin may expect. */
+  private noteAbout(definition: Setting): string {
+    if (definition.section !== "sync") {
+      return null;
+    }
+    if (definition.field === "interval" && this.sync.interval == null) {
+      return "The desktop app's automatic sync is off.";
+    }
+    if (this.directory === DirectoryType.Ldap && IGNORED_FOR_LDAP.has(definition.field)) {
+      return (
+        "An LDAP sync does not use this setting: it sends everything under the base DN, " +
+        "and what is imported is chosen in Cockpit."
+      );
+    }
+    return null;
   }
 
   /**
    * The value itself, or for a secret from --secretenv / --secretfile, so it never has to be typed on a
    * command line (where it would land in the shell history and the process list).
    */
-  private async readValue(value: string, options: program.OptionValues, definition: Setting) {
+  private async readValue(
+    value: string,
+    options: program.OptionValues,
+    definition: Setting,
+    name: string,
+  ) {
     if (value != null && value !== "") {
       return value;
     }
@@ -300,14 +366,24 @@ export class ConfigCommand {
     }
     if (options.secretfile) {
       // A PEM key spans several lines; every other secret is the file's first line.
-      return definition.field === "privateKey"
-        ? fs.readFileSync(options.secretfile, "utf8")
-        : await NodeUtils.readFirstLine(options.secretfile);
+      const fromFile =
+        definition.field === "privateKey"
+          ? fs.readFileSync(options.secretfile, "utf8")
+          : await NodeUtils.readFirstLine(options.secretfile);
+      if (fromFile == null || fromFile.trim() === "") {
+        throw new Error(`The file ${options.secretfile} is empty.`);
+      }
+      return fromFile;
     }
     if (definition.kind === "secret") {
       throw new Error("Give the value, or --secretenv <variable> or --secretfile <file>.");
     }
-    return null;
+    if (value === "") {
+      // An explicit "" clears the setting, like "null".
+      return "";
+    }
+    // A missing value is a mistake (an unset variable in a script), not a way to clear the setting.
+    throw new Error(`Give a value for ${name}, or "null" to clear it.`);
   }
 
   private parse(raw: string, definition: Setting, name: string): unknown {
@@ -316,9 +392,28 @@ export class ConfigCommand {
     }
     switch (definition.kind) {
       case "number": {
-        const n = Number(raw);
-        if (!Number.isInteger(n) || n < 0) {
+        const n = Number(raw.trim());
+        if (!Number.isInteger(n)) {
           throw new Error(`${name} must be a whole number.`);
+        }
+        if (definition.section === "ldap" && definition.field === "port") {
+          if (n < 1 || n > 65535) {
+            throw new Error(`${name} must be a port number from 1 to 65535.`);
+          }
+          return n;
+        }
+        if (n < 0) {
+          throw new Error(`${name} must be 0 or more.`);
+        }
+        if (
+          definition.section === "sync" &&
+          definition.field === "interval" &&
+          n > 0 &&
+          n < MIN_SYNC_INTERVAL_MINUTES
+        ) {
+          throw new Error(
+            `${name} must be at least ${MIN_SYNC_INTERVAL_MINUTES} minutes (0 switches the automatic sync off).`,
+          );
         }
         return n;
       }
@@ -363,10 +458,37 @@ export class ConfigCommand {
   }
 
   private async setServer(url: string) {
+    if (url == null || url.trim() === "") {
+      throw new Error('Give the server URL, or "default" for the Eduneon cloud.');
+    }
     url = url === "null" || url === "default" ? null : url;
+    // The API token and the directory belong to the server they were given for: never send them
+    // to another one. Logging out first is what `login` asks for too.
+    if (
+      ConfigCommand.serverKey(url ?? DEFAULT_SERVER_URL) !==
+        ConfigCommand.serverKey(this.environmentService.getWebVaultUrl()) &&
+      (await this.stateService.getIsAuthenticated())
+    ) {
+      throw new Error(
+        `You are logged in to ${this.environmentService.getWebVaultUrl()}. ` +
+          'Run "eduneon-dc logout" before changing the server: the API token is only for that server.',
+      );
+    }
     const urls = new EnvironmentUrls();
     urls.base = url;
     await this.environmentService.setUrls(urls);
+  }
+
+  /** A server URL in one spelling, the way EnvironmentService saves it. */
+  private static serverKey(url: string): string {
+    let key = url
+      .trim()
+      .replace(/\/+$/, "")
+      .replace(/\/api$/i, "");
+    if (!/^https?:\/\//i.test(key)) {
+      key = "https://" + key;
+    }
+    return key.toLowerCase();
   }
 
   private async setDirectory(type: string) {
@@ -414,6 +536,9 @@ export class ConfigCommand {
       let text = value == null || value === "" ? "-" : String(value);
       if (definition.kind === "secret") {
         text = value ? "(set)" : "(not set)";
+      }
+      if (this.directory === DirectoryType.Ldap && IGNORED_FOR_LDAP.has(definition.field)) {
+        text += "   (not used by an LDAP sync)";
       }
       lines.push(`${name}: ${text}`);
     }
@@ -468,17 +593,32 @@ export class ConfigCommand {
         continue;
       }
       const target = this.config(section);
-      for (const definition of Object.values(SETTINGS)) {
+      for (const [name, definition] of Object.entries(SETTINGS)) {
         if (
           definition.section === section &&
           definition.kind !== "secret" &&
           definition.field in values
         ) {
-          target[definition.field] = values[definition.field];
+          // The same rules as `config <setting> <value>`: a file is no way around them.
+          target[definition.field] = this.parseImported(values[definition.field], definition, name);
         }
       }
     }
     await this.saveConfig();
+  }
+
+  private parseImported(value: unknown, definition: Setting, name: string): unknown {
+    if (value == null) {
+      return null;
+    }
+    if (typeof value === "object") {
+      throw new Error(`${name} in the file must be a single value.`);
+    }
+    if (definition.kind === "text") {
+      // Text is kept as written ("" clears it, as an export writes an unset value).
+      return String(value).trim() === "" ? null : String(value).trim();
+    }
+    return this.parse(String(value), definition, name);
   }
 
   private async loadConfig() {

@@ -1,5 +1,10 @@
 <div class="container-fluid">
-  <form #form="appApiAction" (ngSubmit)="submit()" [appApiAction]="formPromise()">
+  <form
+    #form="appApiAction"
+    (ngSubmit)="submit()"
+    [appApiAction]="formPromise()"
+    [appApiActionTitle]="'loginFailed' | i18n"
+  >
     <div class="row justify-content-center">
       <div class="col-md-8 col-lg-6">
         <div class="text-center mt-4 mb-3">

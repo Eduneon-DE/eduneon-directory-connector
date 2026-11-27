@@ -27,6 +27,8 @@ export interface DirectorySyncRequest {
   entries: DirectoryEntry[];
   /** The directory's objectClass definitions (RFC 4512), with the first part. */
   objectClasses?: string[];
+  /** Referrals the read did not follow, with the first part: the snapshot is not the whole directory. */
+  unfollowedReferrals?: string[];
 }
 
 export interface DirectorySyncIssue {
@@ -41,9 +43,11 @@ export interface DirectorySyncResponse {
   /**
    * receiving: a part was stored, send the next. awaiting-setup: stored, but the import is not set
    * up in Cockpit yet. stored: kept in Cockpit, not imported (automatic import is off there).
-   * previewed / synced: applied (dry run or for real).
+   * previewed / synced: applied (dry run or for real). importing: the import runs in Cockpit as a
+   * background job (no mappings in the answer). refused: not imported now; an issue says why.
    */
-  status: "receiving" | "awaiting-setup" | "stored" | "previewed" | "synced";
+  status:
+    "receiving" | "awaiting-setup" | "stored" | "importing" | "refused" | "previewed" | "synced";
   uploadId: string;
   dryRun: boolean;
   received: number;

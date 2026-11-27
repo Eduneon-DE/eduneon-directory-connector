@@ -56,17 +56,24 @@ export class LoginCommand {
     if (fromEnv != null) {
       return fromEnv;
     }
-    if (process.env.EDUNEON_DC_NOINTERACTION === "true") {
+    // Without a terminal to type in (a script, cron, input from /dev/null) there is nobody to ask:
+    // the prompt would end with an uncaught error and exit code 0.
+    if (process.env.EDUNEON_DC_NOINTERACTION === "true" || !process.stdin.isTTY) {
       return null;
     }
-    const answer: inquirer.Answers = await inquirer.createPromptModule({
-      output: process.stderr,
-    })({
-      type: "password",
-      name: "apiToken",
-      message: "Cockpit API token:",
-      mask: "*",
-    });
-    return answer.apiToken;
+    try {
+      const answer: inquirer.Answers = await inquirer.createPromptModule({
+        output: process.stderr,
+      })({
+        type: "password",
+        name: "apiToken",
+        message: "Cockpit API token:",
+        mask: "*",
+      });
+      return answer.apiToken;
+    } catch {
+      // The prompt was closed (Ctrl+C, end of input): no token, and the command fails.
+      return null;
+    }
   }
 }

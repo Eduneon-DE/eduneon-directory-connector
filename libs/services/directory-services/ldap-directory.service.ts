@@ -6,6 +6,7 @@ import * as ldapts from "ldapts";
 import { I18nService } from "@/libs/abstractions/i18n.service";
 import { LogService } from "@/libs/abstractions/log.service";
 import { StateService } from "@/libs/abstractions/state.service";
+import { normalizeDn } from "@/libs/utils/dn";
 import { isPortEmpty, normalizeLdapHost } from "@/libs/utils/ldapHost";
 import { Utils } from "@/libs/utils/utils";
 
@@ -25,14 +26,53 @@ const UserControlAccountDisabled = 2;
  */
 const ActiveDirectoryExternalId = "objectGUID";
 
-/** Binary attributes, read as bytes and sent to Cockpit as base64. */
-const BinaryAttributes = [ActiveDirectoryExternalId, "objectSid"];
+/**
+ * Binary attributes, read as bytes and sent to Cockpit as base64: the same ids Cockpit reads as
+ * binary (BINARY_ATTRIBUTES in its directory-sync.profiles.ts). ldapts matches these names exactly,
+ * so the spellings servers use are all listed; a GUID that happens to be valid UTF-8 would otherwise
+ * arrive as text, with a NUL byte Cockpit cannot store.
+ */
+const BinaryAttributes = [
+  ActiveDirectoryExternalId,
+  "objectGuid",
+  "objectguid",
+  "objectSid",
+  "objectSID",
+  "objectsid",
+  "mS-DS-ConsistencyGuid",
+  "ms-DS-ConsistencyGuid",
+  "ms-ds-consistencyguid",
+  "GUID",
+  "guid",
+];
 
 /**
  * Attributes requested on every search: all user attributes, plus the operational ones Cockpit's
- * mappings commonly use (OpenLDAP keeps memberOf and entryUUID operational; AD returns them anyway).
+ * mappings commonly use (OpenLDAP keeps memberOf and entryUUID operational; AD returns them anyway),
+ * and the operational ids Cockpit offers as stable ids (nsUniqueId on 389 DS, orclGUID on Oracle,
+ * GUID on eDirectory): "*" never returns them. A server without one simply leaves it out.
  */
-const RequestedAttributes = ["*", "memberOf", "entryUUID", "modifyTimestamp", "createTimestamp"];
+const RequestedAttributes = [
+  "*",
+  "memberOf",
+  "entryUUID",
+  // What an entry is (OpenLDAP, 389 DS): Cockpit types entries by it.
+  "structuralObjectClass",
+  "nsUniqueId",
+  "orclGUID",
+  "GUID",
+  "modifyTimestamp",
+  "createTimestamp",
+];
+
+/**
+ * Active Directory answers a search of the domain root with referrals to its own DNS and
+ * configuration partitions. Nobody lives there, so they do not make the read incomplete. Windows
+ * names the DNS partitions in the host (ldap://DomainDnsZones.corp/…), Samba only in the DN. The
+ * same rule as Cockpit's own LDAP read (directory-sync.ldap.ts).
+ */
+const AD_PARTITION_REFERRAL =
+  /\/\/(DomainDnsZones|ForestDnsZones)\.|\/(DC=(DomainDnsZones|ForestDnsZones)|CN=Configuration),/i;
 
 /**
  * ldapts defaults a search's server-side time limit to 10 seconds, which the server enforces
@@ -69,6 +109,22 @@ export function describeLdapError(e: unknown, i18nService: I18nService): Error {
     key = "ldapErrorInvalidCredentials";
   } else if (code === 32 || e.name === "NoSuchObjectError" || /Code: 0x20\b/.test(text)) {
     key = "ldapErrorNoSuchObject";
+  } else if (code === 34 || e.name === "InvalidDNSyntaxError" || /Code: 0x22\b/.test(text)) {
+    key = "ldapErrorInvalidDn";
+  } else if (code === 4 || e.name === "SizeLimitExceededError" || /Code: 0x4\b/.test(text)) {
+    key = "ldapErrorSizeLimit";
+  } else if (code === 50 || e.name === "InsufficientAccessError" || /Code: 0x32\b/.test(text)) {
+    key = "ldapErrorInsufficientAccess";
+  } else if (
+    code === 8 ||
+    code === 13 ||
+    e.name === "StrongAuthRequiredError" ||
+    e.name === "ConfidentialityRequiredError" ||
+    /Code: 0x(8|d)\b/.test(text)
+  ) {
+    key = "ldapErrorEncryptionRequired";
+  } else if (code === 3 || e.name === "TimeLimitExceededError" || /Code: 0x3\b/.test(text)) {
+    key = "ldapErrorTimeLimit";
   } else if (code === "ENOTFOUND" || code === "EAI_AGAIN" || /ENOTFOUND|EAI_AGAIN/.test(text)) {
     key = "ldapErrorHostNotFound";
   } else if (code === "ECONNREFUSED" || /ECONNREFUSED/.test(text)) {
@@ -82,7 +138,13 @@ export function describeLdapError(e: unknown, i18nService: I18nService): Error {
   if (key == null) {
     return e;
   }
-  return new Error(i18nService.t(key));
+  // The server's own words, when it gave any, and the result code stay with the hint: they are what
+  // a directory admin looks up.
+  const detail = e.message.replace(/\s*Code: 0x[0-9a-f]+\s*$/i, "").trim();
+  const resultCode = typeof code === "number" ? ` (LDAP result code ${code})` : "";
+  return new Error(
+    i18nService.t(key) + (detail !== "" && resultCode !== "" ? ` ${detail}` : "") + resultCode,
+  );
 }
 
 /**
@@ -168,7 +230,15 @@ export class LdapDirectoryService implements IDirectoryService {
     try {
       const objectClasses = await this.readObjectClasses();
       this.logService.info("Directory snapshot search: " + baseDn + " => (objectClass=*)");
-      const searchEntries = await this.searchAll(baseDn);
+      const { searchEntries, searchReferences = [] } = await this.searchAll(baseDn);
+      await this.readRemainingRanges(searchEntries);
+      const unfollowedReferrals = searchReferences.filter((r) => !AD_PARTITION_REFERRAL.test(r));
+      if (unfollowedReferrals.length > 0) {
+        this.logService.warning(
+          `The directory referred ${unfollowedReferrals.length} part(s) of "${baseDn}" to other servers; ` +
+            `entries there were not read: ${unfollowedReferrals.join(", ")}`,
+        );
+      }
       const limits: ReadLimits = { binaryDropped: 0, truncated: 0 };
       const entries = searchEntries.map((e) => fromLdapEntry(e, limits));
       if (limits.binaryDropped > 0) {
@@ -181,7 +251,12 @@ export class LdapDirectoryService implements IDirectoryService {
           `Cut ${limits.truncated} text value(s) longer than ${MAX_VALUE_LENGTH} characters.`,
         );
       }
-      return { baseDn, objectClasses, entries };
+      return {
+        baseDn,
+        objectClasses,
+        entries,
+        ...(unfollowedReferrals.length > 0 ? { unfollowedReferrals } : {}),
+      };
     } catch (e) {
       throw this.friendlyError(e);
     } finally {
@@ -190,10 +265,14 @@ export class LdapDirectoryService implements IDirectoryService {
   }
 
   /**
-   * Everything under the base DN. Paged, because servers cap unpaged results (Active Directory at
-   * 1000, OpenLDAP's default size limit at 500); a server without the paging control is read unpaged.
+   * Everything under the base DN, and the referrals the server answered with instead of entries.
+   * Paged, because servers cap unpaged results (Active Directory at 1000); a server without the
+   * paging control is read unpaged, and so is one where "Paged search" is switched off. Paging does
+   * not lift a size limit the server sets for the bind account (OpenLDAP's limits for non-admins).
    */
-  private async searchAll(baseDn: string): Promise<ldapts.Entry[]> {
+  private async searchAll(
+    baseDn: string,
+  ): Promise<{ searchEntries: ldapts.Entry[]; searchReferences: string[] }> {
     const options: ldapts.SearchOptions = {
       filter: "(objectClass=*)",
       scope: "sub",
@@ -201,19 +280,66 @@ export class LdapDirectoryService implements IDirectoryService {
       explicitBufferAttributes: BinaryAttributes,
       attributes: RequestedAttributes,
     };
+    if (this.dirConfig.pagedSearch === false) {
+      return await this.client.search(baseDn, options);
+    }
     try {
-      const { searchEntries } = await this.client.search(baseDn, {
+      return await this.client.search(baseDn, {
         ...options,
         paged: { pageSize: 500 },
       });
-      return searchEntries;
     } catch (e) {
       if (!(e instanceof ldapts.UnavailableCriticalExtensionError)) {
         throw e;
       }
       this.logService.warning("The directory does not support paged searches; reading unpaged.");
-      const { searchEntries } = await this.client.search(baseDn, options);
-      return searchEntries;
+      return await this.client.search(baseDn, options);
+    }
+  }
+
+  /**
+   * Active Directory sends a long multi-valued attribute (a group's member list over 1500) in
+   * slices: "member;range=0-1499", and the rest only when asked for "member;range=1500-*". Ask until
+   * the last slice ("…-*") and put the whole list back under the plain name, so Cockpit gets every
+   * member instead of the first slice.
+   */
+  private async readRemainingRanges(entries: ldapts.Entry[]): Promise<void> {
+    for (const entry of entries) {
+      for (const key of Object.keys(entry)) {
+        const ranged = key.match(/^(.+);range=(\d+)-(\d+|\*)$/i);
+        if (ranged == null) {
+          continue;
+        }
+        const name = ranged[1];
+        const values = [entry[key]].flat();
+        let end = ranged[3];
+        while (end !== "*") {
+          const next = `${name};range=${Number(end) + 1}-*`;
+          const { searchEntries } = await this.client.search(entry.dn, {
+            scope: "base",
+            filter: "(objectClass=*)",
+            timeLimit: LdapSearchTimeLimitSeconds,
+            explicitBufferAttributes: BinaryAttributes,
+            attributes: [next],
+          });
+          const slice = Object.entries(searchEntries[0] ?? {}).find(([k]) =>
+            new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")};range=`, "i").test(k),
+          );
+          if (slice == null) {
+            break;
+          }
+          values.push(...[slice[1]].flat());
+          end = slice[0].match(/-(\d+|\*)$/)[1];
+        }
+        delete entry[key];
+        if (end !== "*") {
+          // The rest did not come: keep the range in the name, so Cockpit reports the list as incomplete.
+          this.logService.warning(`Could not read all values of "${name}" of ${entry.dn}.`);
+          entry[`${name};range=${ranged[2]}-${end}`] = values as ldapts.Entry[string];
+          continue;
+        }
+        entry[name] = [...[entry[name] ?? []].flat(), ...values] as ldapts.Entry[string];
+      }
     }
   }
 
@@ -370,7 +496,8 @@ export class LdapDirectoryService implements IDirectoryService {
       const dn = this.getReferenceId(se);
       const uid = this.getAttr<string>(se, "uid");
       const externalId = this.getExternalId(se, dn);
-      userDnMap.set(dn, externalId);
+      // LDAP compares DNs without case: a group may list "UID=U1,OU=People,…" for uid=u1,ou=people,….
+      userDnMap.set(normalizeDn(dn), externalId);
       if (uid != null) {
         userUidMap.set(uid.toLowerCase(), externalId);
       }
@@ -424,7 +551,7 @@ export class LdapDirectoryService implements IDirectoryService {
       const getMemberAttributeType = (member: string): "memberDn" | "memberUid" | "groupDn" => {
         const isDnLike = member.includes("=") && member.includes(",");
         if (isDnLike) {
-          return userDnMap.has(member) ? "memberDn" : "groupDn";
+          return userDnMap.has(normalizeDn(member)) ? "memberDn" : "groupDn";
         }
         return "memberUid";
       };
@@ -432,7 +559,7 @@ export class LdapDirectoryService implements IDirectoryService {
       for (const member of members) {
         switch (getMemberAttributeType(member)) {
           case "memberDn": {
-            const externalId = userDnMap.get(member);
+            const externalId = userDnMap.get(normalizeDn(member));
             if (externalId != null) {
               group.userMemberExternalIds.add(externalId);
             }

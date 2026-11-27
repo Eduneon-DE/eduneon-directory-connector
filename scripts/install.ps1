@@ -93,7 +93,12 @@ try {
   if ($App) { Install-App (Get-Asset "Eduneon-Directory-Connector-Setup-$script:Version.exe") }
 
   Write-Host ""
-  Write-Host "Next: eduneon-dc login   (with a Cockpit API token, see Platform -> Service accounts)"
+  if ($App) {
+    # The desktop app logs in and syncs on its own; the CLI is there for scripts.
+    Write-Host "Next: open Eduneon Directory Connector from the Start menu."
+  } else {
+    Write-Host "Next: eduneon-dc login   (with a Cockpit API token, see Platform -> Service accounts)"
+  }
 }
 finally {
   Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
