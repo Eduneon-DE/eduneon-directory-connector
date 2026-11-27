@@ -13,13 +13,9 @@ import { IndividualConfig, ToastrService } from "ngx-toastr";
 
 import { BroadcasterService } from "@/libs/abstractions/broadcaster.service";
 import { I18nService } from "@/libs/abstractions/i18n.service";
-import { LogService } from "@/libs/abstractions/log.service";
-import { MessagingService } from "@/libs/abstractions/messaging.service";
 import { PlatformUtilsService } from "@/libs/abstractions/platformUtils.service";
-import { StateService } from "@/libs/abstractions/state.service";
 
 import { RendererAuthService } from "@/src-gui/services/electron/rendererAuth.service";
-import { RendererSyncService } from "@/src-gui/services/electron/rendererSync.service";
 
 const BroadcasterSubscriptionId = "AppComponent";
 
@@ -37,64 +33,18 @@ export class AppComponent implements OnInit {
 
   private broadcasterService = inject(BroadcasterService);
   private authService = inject(RendererAuthService);
-  private syncService = inject(RendererSyncService);
   private router = inject(Router);
   private toastrService = inject(ToastrService);
   private i18nService = inject(I18nService);
   private sanitizer = inject(DomSanitizer);
   private platformUtilsService = inject(PlatformUtilsService);
-  private messagingService = inject(MessagingService);
-  private stateService = inject(StateService);
-  private logService = inject(LogService);
 
+  // The sync schedule (its timer and the scheduled syncs) runs in the main process: see MessagingMain.
   ngOnInit() {
     this.broadcasterService.subscribe(BroadcasterSubscriptionId, async (message: any) => {
       switch (message.command) {
-        case "syncScheduleStarted":
-        case "syncScheduleStopped":
-          this.stateService.setSyncingDir(message.command === "syncScheduleStarted");
-          break;
         case "logout":
           this.logOut(!!message.expired);
-          break;
-        case "checkDirSync":
-          try {
-            const syncConfig = await this.stateService.getSync();
-            if (syncConfig.interval == null || syncConfig.interval < 5) {
-              return;
-            }
-
-            const syncInterval = syncConfig.interval * 60000;
-            const lastGroupSync = await this.stateService.getLastGroupSync();
-            const lastUserSync = await this.stateService.getLastUserSync();
-            let lastSync: Date = null;
-            if (lastGroupSync != null && lastUserSync == null) {
-              lastSync = lastGroupSync;
-            } else if (lastGroupSync == null && lastUserSync != null) {
-              lastSync = lastUserSync;
-            } else if (lastGroupSync != null && lastUserSync != null) {
-              if (lastGroupSync.getTime() < lastUserSync.getTime()) {
-                lastSync = lastGroupSync;
-              } else {
-                lastSync = lastUserSync;
-              }
-            }
-
-            let lastSyncAgo = syncInterval + 1;
-            if (lastSync != null) {
-              lastSyncAgo = new Date().getTime() - lastSync.getTime();
-            }
-
-            if (lastSyncAgo >= syncInterval) {
-              await this.syncService.run(false, false);
-            }
-          } catch (e) {
-            this.logService.error(e);
-          }
-
-          // Hand back the check's generation: the main process ignores it if Stop was pressed
-          // meanwhile.
-          this.messagingService.send("scheduleNextDirSync", { generation: message.generation });
           break;
         case "showToast":
           this.showToast(message);

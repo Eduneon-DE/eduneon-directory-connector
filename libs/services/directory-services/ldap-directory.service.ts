@@ -63,9 +63,11 @@ export function describeLdapError(e: unknown, i18nService: I18nService): Error {
   const code = (e as { code?: unknown }).code;
   const text = `${e.message} ${(e as { cause?: unknown }).cause ?? ""}`;
   let key: string = null;
-  if (code === 49 || e.name === "InvalidCredentialsError") {
+  // The result code is also read from the text ("… Code: 0x31"): an error that crossed a process
+  // boundary keeps only its message.
+  if (code === 49 || e.name === "InvalidCredentialsError" || /Code: 0x31\b/.test(text)) {
     key = "ldapErrorInvalidCredentials";
-  } else if (code === 32 || e.name === "NoSuchObjectError") {
+  } else if (code === 32 || e.name === "NoSuchObjectError" || /Code: 0x20\b/.test(text)) {
     key = "ldapErrorNoSuchObject";
   } else if (code === "ENOTFOUND" || code === "EAI_AGAIN" || /ENOTFOUND|EAI_AGAIN/.test(text)) {
     key = "ldapErrorHostNotFound";
@@ -81,6 +83,21 @@ export function describeLdapError(e: unknown, i18nService: I18nService): Error {
     return e;
   }
   return new Error(i18nService.t(key));
+}
+
+/**
+ * A certificate or key file named in the settings. A path that is set but cannot be read is an
+ * error: going on without the file fails later with a TLS message that does not name the file.
+ */
+function readTlsFile(path: string | null | undefined, what: string): Buffer | null {
+  if (path == null || path.trim() === "") {
+    return null;
+  }
+  try {
+    return fs.readFileSync(path.trim());
+  } catch {
+    throw new Error(`The ${what} file "${path}" was not found or is not readable.`);
+  }
 }
 
 export class LdapDirectoryService implements IDirectoryService {
@@ -643,34 +660,22 @@ export class LdapDirectoryService implements IDirectoryService {
       tlsOptions.rejectUnauthorized = !this.dirConfig.sslAllowUnauthorized;
     }
     if (!this.dirConfig.startTls) {
-      if (
-        this.dirConfig.sslCaPath != null &&
-        this.dirConfig.sslCaPath !== "" &&
-        fs.existsSync(this.dirConfig.sslCaPath)
-      ) {
-        tlsOptions.ca = [fs.readFileSync(this.dirConfig.sslCaPath)];
+      const ca = readTlsFile(this.dirConfig.sslCaPath, "CA certificate");
+      if (ca != null) {
+        tlsOptions.ca = [ca];
       }
-      if (
-        this.dirConfig.sslCertPath != null &&
-        this.dirConfig.sslCertPath !== "" &&
-        fs.existsSync(this.dirConfig.sslCertPath)
-      ) {
-        tlsOptions.cert = fs.readFileSync(this.dirConfig.sslCertPath);
+      const cert = readTlsFile(this.dirConfig.sslCertPath, "client certificate");
+      if (cert != null) {
+        tlsOptions.cert = cert;
       }
-      if (
-        this.dirConfig.sslKeyPath != null &&
-        this.dirConfig.sslKeyPath !== "" &&
-        fs.existsSync(this.dirConfig.sslKeyPath)
-      ) {
-        tlsOptions.key = fs.readFileSync(this.dirConfig.sslKeyPath);
+      const key = readTlsFile(this.dirConfig.sslKeyPath, "client key");
+      if (key != null) {
+        tlsOptions.key = key;
       }
     } else {
-      if (
-        this.dirConfig.tlsCaPath != null &&
-        this.dirConfig.tlsCaPath !== "" &&
-        fs.existsSync(this.dirConfig.tlsCaPath)
-      ) {
-        tlsOptions.ca = [fs.readFileSync(this.dirConfig.tlsCaPath)];
+      const ca = readTlsFile(this.dirConfig.tlsCaPath, "CA certificate");
+      if (ca != null) {
+        tlsOptions.ca = [ca];
       }
     }
 

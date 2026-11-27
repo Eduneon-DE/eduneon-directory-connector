@@ -36,6 +36,15 @@ export class AuthService {
     }
 
     const status = await this.apiService.getConnectorStatus(apiToken, directoryId, organizationId);
+    // Checked before anything is saved: a half-saved login is worse than none.
+    if (
+      status?.provider == null ||
+      !(Number.isInteger(status.provider.id) && status.provider.id > 0)
+    ) {
+      throw new Error(
+        "This server is not Cockpit, or it did not name a directory. Check the server URL and log in again.",
+      );
+    }
 
     await this.stateService.setAccessToken(apiToken);
     await this.stateService.setCockpitOrganizationId(

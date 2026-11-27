@@ -81,4 +81,14 @@ describe("AuthService", () => {
     await expect(authService.logIn({ apiToken: " " })).rejects.toThrow("API token is required");
     expect(apiService.getConnectorStatus).not.toHaveBeenCalled();
   });
+
+  it("saves nothing when the server answers but is not Cockpit", async () => {
+    for (const answer of [null, {}, { provider: null }, { provider: { id: 0, name: "" } }]) {
+      apiService.getConnectorStatus.mockResolvedValue(answer as any);
+
+      await expect(authService.logIn({ apiToken: "t" })).rejects.toThrow("not Cockpit");
+    }
+    expect(stateService.setAccessToken).not.toHaveBeenCalled();
+    expect(stateService.setOrganizationId).not.toHaveBeenCalled();
+  });
 });

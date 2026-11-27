@@ -11,8 +11,17 @@ import {
 import { ErrorResponse } from "@/libs/models/response/errorResponse";
 import { Utils } from "@/libs/utils/utils";
 
-/** Cockpit's 401 codes for a login that must name (or named a wrong) organization. */
-const ORGANIZATION_CODES = ["ORGANIZATION_SELECTION_REQUIRED", "INVALID_ORGANIZATION_SELECTION"];
+/**
+ * Cockpit's 401 answers that mean "this token is no good": only these log the connector out. Any
+ * other 401 (choose an organization, a proxy in front of Cockpit, a server that is not Cockpit)
+ * keeps the token.
+ */
+const INVALID_TOKEN_MESSAGES = ["Invalid or expired API token", "User not found in system"];
+const INVALID_TOKEN_CODE = "INVALID_API_TOKEN";
+
+/** How long a request may wait for Cockpit's answer. The last part of an upload runs the import, so it gets longer. */
+export const REQUEST_TIMEOUT_MS = 30 * 1000;
+export const SYNC_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
  * Talks to Cockpit. Every request carries the Cockpit API token of a service account as
@@ -41,11 +50,19 @@ export class ApiService implements ApiServiceAbstraction {
       null,
       apiToken,
       organizationId,
+      REQUEST_TIMEOUT_MS,
     );
   }
 
   postDirectorySync(request: DirectorySyncRequest): Promise<DirectorySyncResponse> {
-    return this.send("POST", "/v1/directory-connector/sync", request);
+    return this.send(
+      "POST",
+      "/v1/directory-connector/sync",
+      request,
+      undefined,
+      undefined,
+      SYNC_REQUEST_TIMEOUT_MS,
+    );
   }
 
   protected nativeFetch(request: Request): Promise<Response> {
@@ -58,6 +75,7 @@ export class ApiService implements ApiServiceAbstraction {
     body: unknown,
     apiToken?: string,
     organizationId?: number,
+    timeoutMs = REQUEST_TIMEOUT_MS,
   ): Promise<T> {
     const apiUrl = await this.stateService.getApiUrl();
     const requestUrl = apiUrl + path;
@@ -101,24 +119,38 @@ export class ApiService implements ApiServiceAbstraction {
           headers,
           cache: "no-store",
           body: body == null ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs),
         }),
       );
     } catch (e) {
+      if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
+        throw new Error(
+          `Cockpit at ${apiUrl} did not answer within ${timeoutMs / 1000} seconds. Check the server URL and the network, then try again.`,
+        );
+      }
       throw new Error(
         `Could not reach Cockpit at ${apiUrl}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
 
-    const json = this.isJsonResponse(response)
-      ? await response.json().catch((): null => null)
-      : null;
+    const isJson = this.isJsonResponse(response);
+    const json = isJson ? await response.json().catch((): null => null) : null;
     if (response.ok) {
+      if (!isJson || json == null) {
+        // A web page (a login page after a redirect, another web site): nothing here is an answer.
+        throw new Error(
+          `The server at ${apiUrl} is not Cockpit: it did not answer like the Cockpit API. Check the server URL (for example https://cockpit.example.org).`,
+        );
+      }
       return json as T;
     }
 
-    // A token that is still valid but needs an organization chosen is no reason to log out.
-    const needsOrganization = response.status === 401 && ORGANIZATION_CODES.includes(json?.code);
-    if (response.status === 401 && !loggingIn && !needsOrganization) {
+    // Only Cockpit saying the token is no good logs out; a token that needs an organization
+    // chosen, or a 401 from something in front of Cockpit, is no reason to.
+    const invalidToken =
+      response.status === 401 &&
+      (json?.code === INVALID_TOKEN_CODE || INVALID_TOKEN_MESSAGES.includes(json?.message));
+    if (invalidToken && !loggingIn) {
       try {
         await this.logoutCallback(true);
       } catch {
@@ -153,17 +185,36 @@ export class ApiService implements ApiServiceAbstraction {
           "This account has no active access to the chosen organization. Log in again with another organization ID.",
       };
     }
+    if (response.status === 401 && loggingIn) {
+      return {
+        message:
+          "Cockpit did not accept this API token. Check that it is copied completely and has not expired.",
+      };
+    }
+    if (
+      response.status === 401 &&
+      (json?.code === INVALID_TOKEN_CODE || INVALID_TOKEN_MESSAGES.includes(json?.message))
+    ) {
+      return {
+        message: "Cockpit no longer accepts the API token. Log in again with a new token.",
+      };
+    }
     if (response.status === 401) {
       return {
-        message: loggingIn
-          ? "Cockpit did not accept this API token. Check that it is copied completely and has not expired."
-          : "Cockpit no longer accepts the API token. Log in again with a new token.",
+        message:
+          "The server refused the request (401). The API token is kept: if this goes on, check the server URL or log in again.",
       };
     }
     if (response.status === 403) {
       return {
         message:
           "The API token's account is not allowed to manage directories in Cockpit. Give the service account a role that can edit identity providers.",
+      };
+    }
+    if (response.status === 413) {
+      return {
+        message:
+          "Cockpit refused the upload as too large (413). A proxy in front of Cockpit may limit the request size: allow requests of at least 10 MB there.",
       };
     }
     const message = json?.message ?? json?.Message;

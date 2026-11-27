@@ -93,6 +93,7 @@ describe("SyncService", () => {
     expect(messagingService.send).toHaveBeenLastCalledWith("dirSyncCompleted", {
       successfully: true,
       summary: "AuthenticationAccount: 1 created, 0 updated, 0 unchanged",
+      outcome: expect.objectContaining({ status: "synced", needsAttention: false }),
     });
   });
 
@@ -116,12 +117,12 @@ describe("SyncService", () => {
       issues: [{ targetModel: "", severity: "error", code: "x", message: "Mapping is broken" }],
     });
 
-    await syncService.sync(false, false);
+    const [, , outcome] = await syncService.sync(false, false);
 
     expect(stateService.setLastUserSync).toHaveBeenCalled();
-    expect(syncService.lastOutcome?.needsAttention).toBe(true);
-    expect(syncService.lastOutcome?.message).toContain("Needs attention in Cockpit");
-    expect(syncService.lastOutcome?.message).toContain("Mapping is broken");
+    expect(outcome?.needsAttention).toBe(true);
+    expect(outcome?.message).toContain("Needs attention in Cockpit");
+    expect(outcome?.message).toContain("Mapping is broken");
   });
 
   it("says the upload was only stored when Cockpit does not import uploads automatically", async () => {
@@ -131,10 +132,10 @@ describe("SyncService", () => {
       mappings: [],
     });
 
-    await syncService.sync(false, false);
+    const [, , outcome] = await syncService.sync(false, false);
 
-    expect(syncService.lastOutcome?.needsAttention).toBe(false);
-    expect(syncService.lastOutcome?.message).toContain("nothing was imported");
+    expect(outcome?.needsAttention).toBe(false);
+    expect(outcome?.message).toContain("nothing was imported");
   });
 
   it("uploads a large directory in parts under one upload id, the schema only once", async () => {
@@ -199,10 +200,121 @@ describe("SyncService", () => {
       mappings: [],
     });
 
-    await syncService.sync(false, false);
+    const [, , outcome] = await syncService.sync(false, false);
 
-    expect(syncService.lastOutcome).toMatchObject({ status: "awaiting-setup", received: 434 });
-    expect(syncService.lastOutcome.message).toContain("Finish the setup in Cockpit");
+    expect(outcome).toMatchObject({ status: "awaiting-setup", received: 434 });
+    expect(outcome.message).toContain("Finish the setup in Cockpit");
+  });
+
+  it("lets a second sync join the running one: one upload, both get its outcome", async () => {
+    let answer: (r: DirectorySyncResponse) => void;
+    apiService.postDirectorySync.mockImplementation(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+
+    const syncNow = syncService.sync(false, false);
+    await new Promise((r) => setTimeout(r, 5));
+    const scheduled = syncService.sync(false, false); // a scheduled check while Sync Now runs
+    answer({ ...okResponse, provider: { id: 7, name: "A" } });
+    const [first, second] = await Promise.all([syncNow, scheduled]);
+
+    expect(apiService.postDirectorySync).toHaveBeenCalledTimes(1);
+    expect(first[2]).toMatchObject({ directory: "A", status: "synced" });
+    expect(second[2]).toBe(first[2]);
+
+    // Finished: the next sync uploads again.
+    apiService.postDirectorySync.mockResolvedValue(okResponse);
+    await syncService.sync(false, false);
+    expect(apiService.postDirectorySync).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns each sync's own outcome, also when the next one starts while it saves its times", async () => {
+    // setup-10: the outcome used to sit on the service, so a sync starting meanwhile wiped it.
+    let releaseSave: () => void;
+    stateService.setLastGroupSync.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (releaseSave = resolve)),
+    );
+    apiService.postDirectorySync.mockResolvedValueOnce({
+      ...okResponse,
+      provider: { id: 7, name: "A" },
+    });
+
+    const a = syncService.sync(false, false);
+    await new Promise((r) => setTimeout(r, 5));
+    const b = syncService.sync(false, false);
+    releaseSave();
+
+    expect((await a)[2]).toMatchObject({ directory: "A" });
+    expect((await b)[2]).toMatchObject({ directory: "A" });
+  });
+
+  it("reads Cockpit's sync-in-progress answer as a refusal and does not save the sync time", async () => {
+    apiService.postDirectorySync.mockResolvedValue({
+      ...okResponse,
+      mappings: [],
+      issues: [
+        {
+          targetModel: "",
+          severity: "error",
+          code: "sync-in-progress",
+          message: "A model sync for identity provider 7 is already running.",
+        },
+      ],
+    });
+
+    const [, , outcome] = await syncService.sync(false, false);
+
+    expect(outcome.refused).toBe(true);
+    expect(outcome.needsAttention).toBe(true);
+    expect(outcome.message).toContain("another import");
+    expect(outcome.message).not.toContain("no mapping is enabled");
+    expect(stateService.setLastGroupSync).not.toHaveBeenCalled();
+    expect(stateService.setLastUserSync).not.toHaveBeenCalled();
+    expect(messagingService.send).toHaveBeenLastCalledWith(
+      "dirSyncCompleted",
+      expect.objectContaining({ successfully: false, outcome }),
+    );
+  });
+
+  it("shows Cockpit's warnings as needing attention", async () => {
+    apiService.postDirectorySync.mockResolvedValue({
+      ...okResponse,
+      issues: [
+        {
+          targetModel: "AuthenticationAccount",
+          severity: "warning",
+          code: "read-empty",
+          message: "The read found no entries for this mapping.",
+        },
+      ],
+    });
+
+    const [, , outcome] = await syncService.sync(false, false);
+
+    expect(outcome.needsAttention).toBe(true);
+    expect(outcome.message).toContain("The read found no entries for this mapping.");
+    expect(stateService.setLastUserSync).toHaveBeenCalled();
+  });
+
+  it("does not say 'no mapping is enabled' when Cockpit imported nothing because of an error", () => {
+    const message = SyncService.describe({
+      ...okResponse,
+      mappings: [],
+      issues: [{ targetModel: "", severity: "error", code: "x", message: "broken" }],
+    });
+    expect(message).not.toContain("no mapping is enabled");
+    expect(message).toContain("imported nothing");
+  });
+
+  it("sends why a sync failed with dirSyncCompleted, for the dashboard", async () => {
+    apiService.postDirectorySync.mockRejectedValue(new Error("Cockpit is down"));
+
+    await expect(syncService.sync(false, false)).rejects.toThrow("Cockpit is down");
+
+    expect(messagingService.send).toHaveBeenLastCalledWith("dirSyncCompleted", {
+      successfully: false,
+      error: "Cockpit is down",
+    });
   });
 
   it("builds entries itself for directories without a raw snapshot", () => {

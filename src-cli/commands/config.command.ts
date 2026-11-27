@@ -13,7 +13,7 @@ import { OktaConfiguration } from "@/libs/models/oktaConfiguration";
 import { OneLoginConfiguration } from "@/libs/models/oneLoginConfiguration";
 import { SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { ConnectorUtils } from "@/libs/utils";
-import { isPortEmpty, normalizeLdapHost } from "@/libs/utils/ldapHost";
+import { applyLdapHostInput } from "@/libs/utils/ldapHost";
 import { NodeUtils } from "@/libs/utils/nodeUtils";
 
 import { Response } from "@/src-cli/models/response";
@@ -339,18 +339,14 @@ export class ConfigCommand {
     }
   }
 
-  /** "ldaps://dc1:636/" → hostname "dc1"; the port goes to ldap.port when that is empty. */
+  /** "ldaps://dc1:636/" → hostname "dc1", port 636, LDAPS. */
   private cleanLdapHostname() {
     if (this.ldap.hostname == null) {
       return;
     }
-    const { hostname, port } = normalizeLdapHost(this.ldap.hostname);
-    if (hostname === "") {
+    applyLdapHostInput(this.ldap);
+    if (this.ldap.hostname === "") {
       throw new Error(this.i18nService.t("ldapHostnameMissing"));
-    }
-    this.ldap.hostname = hostname;
-    if (port != null && isPortEmpty(this.ldap.port)) {
-      this.ldap.port = port;
     }
   }
 

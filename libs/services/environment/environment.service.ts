@@ -84,7 +84,8 @@ export class DefaultEnvironmentService implements EnvironmentService {
   }
 
   async setUrls(urls: EnvironmentUrls): Promise<void> {
-    urls.base = this.formatUrl(urls.base);
+    // "https://cockpit.example.org/api" typed as the server: the API path is added here.
+    urls.base = this.formatUrl(urls.base)?.replace(/\/api$/i, "") ?? null;
     urls.webVault = this.formatUrl(urls.webVault);
     urls.api = this.formatUrl(urls.api);
     urls.identity = this.formatUrl(urls.identity);
@@ -114,15 +115,18 @@ export class DefaultEnvironmentService implements EnvironmentService {
   }
 
   private formatUrl(url: string): string {
+    url = url?.trim();
     if (url == null || url === "") {
       return null;
     }
 
     url = url.replace(/\/+$/g, "");
+    // "HTTP://host" is http://host, not https://HTTP://host.
+    url = url.replace(/^(https?):\/\//i, (scheme) => scheme.toLowerCase());
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
       url = "https://" + url;
     }
 
-    return url.trim();
+    return url;
   }
 }

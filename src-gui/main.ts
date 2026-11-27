@@ -176,11 +176,11 @@ export class Main {
     handle("sync:preview", () => syncService.preview());
 
     handle("sync:run", async (_event, { force, test }: { force: boolean; test: boolean }) => {
-      const [groups, users] = await syncService.sync(force, test);
+      const [groups, users, outcome] = await syncService.sync(force, test);
       return [
         groups?.map((g) => g.toJSON()) ?? null,
         users?.map((u) => u.toJSON()) ?? null,
-        syncService.lastOutcome,
+        outcome,
       ];
     });
 
@@ -218,6 +218,9 @@ export class Main {
       this.menuMain,
       this.updaterMain,
       this.trayMain,
+      this.stateService,
+      syncService,
+      this.logService,
     );
     this.messagingService = new ElectronMainMessagingService(this.windowMain, (message) => {
       this.messagingMain.onMessage(message);
@@ -242,6 +245,7 @@ export class Main {
       await this.i18nService.init(app.getLocale());
       this.menuMain.init();
       this.messagingMain.init();
+      await this.messagingMain.resumeSchedule();
       await this.updaterMain.init();
       await this.trayMain.init(this.i18nService.t("appName"));
 

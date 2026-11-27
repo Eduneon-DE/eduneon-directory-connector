@@ -901,4 +901,10 @@
       </div>
     </div>
   </div>
+  <!-- Leaving the tab also saves, but closing the window from here does not. -->
+  <div class="col-12">
+    <button type="button" class="btn btn-primary" (click)="save()">
+      {{ "save" | i18n }}
+    </button>
+  </div>
 </div>

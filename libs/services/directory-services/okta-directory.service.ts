@@ -14,6 +14,7 @@ import { BaseDirectoryService } from "../baseDirectory.service";
 import { IDirectoryService } from "./directory.service";
 
 const DelayBetweenBuildGroupCallsInMilliseconds = 500;
+const OktaRequestTimeoutMs = 30 * 1000;
 
 export class OktaDirectoryService extends BaseDirectoryService implements IDirectoryService {
   private dirConfig: OktaConfiguration;
@@ -183,13 +184,21 @@ export class OktaDirectoryService extends BaseDirectoryService implements IDirec
   }
 
   private async apiGetCall(url: string): Promise<[any, Map<string, string | string[]>]> {
-    const u = new URL(url);
-    return new Promise((resolve) => {
-      https.get(
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      throw new Error(`The Okta organization URL is not valid: ${this.dirConfig.orgUrl}`);
+    }
+    return new Promise((resolve, reject) => {
+      // Every failure becomes this rejection: an "error" event without a listener ends the whole app.
+      const fail = (reason: string) =>
+        reject(new Error(`Okta request to ${u.host} failed: ${reason}`));
+      const req = https.get(
         {
           hostname: u.hostname,
           path: u.pathname + u.search,
-          port: 443,
+          port: u.port || 443,
           headers: {
             Authorization: "SSWS " + this.dirConfig.token,
             Accept: "application/json",
@@ -204,11 +213,21 @@ export class OktaDirectoryService extends BaseDirectoryService implements IDirec
 
           res.on("end", () => {
             if (res.statusCode !== 200) {
-              resolve(null);
+              fail(
+                res.statusCode === 401 || res.statusCode === 403
+                  ? `Okta answered ${res.statusCode}. Check the API token.`
+                  : `Okta answered ${res.statusCode}. Check the organization URL.`,
+              );
               return;
             }
 
-            const responseJson = JSON.parse(body);
+            let responseJson: any;
+            try {
+              responseJson = JSON.parse(body);
+            } catch {
+              fail("the answer is not JSON. Check the organization URL.");
+              return;
+            }
             if (res.headers != null) {
               const headersMap = new Map<string, string | string[]>();
               for (const key in res.headers) {
@@ -224,10 +243,12 @@ export class OktaDirectoryService extends BaseDirectoryService implements IDirec
             resolve([responseJson, null]);
           });
 
-          res.on("error", () => {
-            resolve(null);
-          });
+          res.on("error", (e) => fail(e.message));
         },
+      );
+      req.on("error", (e) => fail(e.message));
+      req.setTimeout(OktaRequestTimeoutMs, () =>
+        req.destroy(new Error(`no answer within ${OktaRequestTimeoutMs / 1000} seconds`)),
       );
     });
   }

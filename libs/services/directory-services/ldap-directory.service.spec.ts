@@ -214,4 +214,27 @@ describe("LdapDirectoryService connection", () => {
 
     await expect(directoryService.getEntries(true, true)).rejects.toThrow("Something else");
   });
+
+  it.each([
+    ["Invalid credentials during a bind operation. Code: 0x31", "ldapErrorInvalidCredentials"],
+    ["The target object cannot be found. Code: 0x20", "ldapErrorNoSuchObject"],
+  ])("reads the LDAP result code from the text when the error has none: %p", async (text, hint) => {
+    bindMock.mockRejectedValue(new Error(text));
+
+    await expect(directoryService.getEntries(true, true)).rejects.toThrow(hint);
+  });
+
+  it.each([
+    [{ ssl: true, startTls: false, sslCaPath: "/no/such/ca.pem" }, "CA certificate"],
+    [{ ssl: true, startTls: false, sslCertPath: "/no/such/cert.pem" }, "client certificate"],
+    [{ ssl: true, startTls: false, sslKeyPath: "/no/such/key.pem" }, "client key"],
+    [{ ssl: true, startTls: true, tlsCaPath: "/no/such/ca.pem" }, "CA certificate"],
+  ])("names a certificate file that cannot be read (case %#)", async (config, what) => {
+    useConfig(config);
+
+    await expect(directoryService.getEntries(true, true)).rejects.toThrow(
+      new RegExp(`The ${what} file ".*" was not found or is not readable`),
+    );
+    expect(bindMock).not.toHaveBeenCalled();
+  });
 });

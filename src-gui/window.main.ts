@@ -203,7 +203,8 @@ export class WindowMain {
   }
 
   private async updateWindowState(configKey: string, win: BrowserWindow) {
-    if (win == null) {
+    // On "closed" the window is already destroyed: its bounds were saved on "close".
+    if (win == null || win.isDestroyed()) {
       return;
     }
 

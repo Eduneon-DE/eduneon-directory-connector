@@ -28,7 +28,18 @@ export interface SyncOutcome {
   message: string;
   /** Cockpit took the upload but some entries need an admin there: shown as a warning, not as a failed sync. */
   needsAttention: boolean;
+  /**
+   * Cockpit refused to import this upload now (another import of the directory is running). Not a
+   * completed sync: the sync time is not saved, so the next scheduled check tries again.
+   */
+  refused?: boolean;
 }
+
+/** The groups and users found (for display), and what Cockpit did with the upload (null after a test). */
+export type SyncResult = [GroupEntry[], UserEntry[], SyncOutcome | null];
+
+/** Cockpit's issue code when another import of the same directory is running. */
+const SYNC_IN_PROGRESS = "sync-in-progress";
 
 /**
  * Reads the configured directory and sends it to Cockpit.
@@ -38,8 +49,8 @@ export interface SyncOutcome {
  * configured). So the read is never a delta, and an empty read is never sent.
  */
 export class SyncService {
-  /** The outcome of the last sync that reached Cockpit; null after a test or a failure. */
-  lastOutcome: SyncOutcome | null = null;
+  /** The upload that is running (Sync Now, a scheduled sync, Start): a second one joins it. */
+  private running: Promise<SyncResult> | null = null;
 
   constructor(
     private apiService: ApiService,
@@ -50,9 +61,22 @@ export class SyncService {
 
   /**
    * @param test read only and return what was found; nothing is sent to Cockpit.
-   * @returns the groups and users found, for display.
+   * @returns the groups and users found, for display, and what Cockpit did with the upload. A sync
+   * asked for while one is running gets that one's result instead of sending the directory twice.
    */
-  async sync(_force: boolean, test: boolean): Promise<[GroupEntry[], UserEntry[]]> {
+  sync(force: boolean, test: boolean): Promise<SyncResult> {
+    if (test) {
+      return this.runSync(force, test);
+    }
+    if (this.running == null) {
+      this.running = this.runSync(force, test).finally(() => {
+        this.running = null;
+      });
+    }
+    return this.running;
+  }
+
+  private async runSync(_force: boolean, test: boolean): Promise<SyncResult> {
     const dirType = await this.stateService.getDirectoryType();
     if (dirType == null) {
       throw new Error("No directory configured.");
@@ -68,7 +92,6 @@ export class SyncService {
     const startingUserDelta = await this.stateService.getUserDelta();
     const now = new Date();
 
-    this.lastOutcome = null;
     this.messagingService.send("dirSyncStarted");
     try {
       // A directory read whole for Cockpit (LDAP) needs no user/group search to upload: that search follows the
@@ -81,7 +104,7 @@ export class SyncService {
 
       if (test) {
         this.messagingService.send("dirSyncCompleted", { successfully: true });
-        return [groups, users];
+        return [groups, users, null];
       }
 
       const snapshot = await SyncService.snapshotOf(directoryService, dirType, groups, users);
@@ -93,39 +116,66 @@ export class SyncService {
       }
 
       const result = await this.upload(snapshot);
-      // The upload reached Cockpit: that is a completed sync. What Cockpit could not import is for an admin there,
-      // said as such, not as "an error has occurred" on this machine.
-      const problems = result?.issues?.filter((i) => i.severity === "error") ?? [];
-      const needsAttention =
-        problems.length > 0 ||
-        (result?.mappings ?? []).some((m) => m.errors > 0 || m.conflicts > 0);
-      const described = SyncService.describe(result);
-      this.lastOutcome = {
-        status: result.status,
-        directory: result.provider.name,
-        received: result.received,
-        needsAttention,
-        message: needsAttention
-          ? `${described}\n\nNeeds attention in Cockpit (Platform → Authentication → "${result.provider.name}")` +
-            (problems.length > 0 ? `:\n${problems.map((i) => `• ${i.message}`).join("\n")}` : ".")
-          : described,
-      };
-
-      await this.saveSyncTimes(syncConfig, now);
+      const outcome = SyncService.outcomeOf(result);
+      if (!outcome.refused) {
+        await this.saveSyncTimes(syncConfig, now);
+      }
       this.messagingService.send("dirSyncCompleted", {
-        successfully: true,
-        summary: this.lastOutcome.message,
+        successfully: !outcome.refused,
+        summary: outcome.message,
+        outcome,
       });
-      return [groups, users];
+      return [groups, users, outcome];
     } catch (e) {
       if (!test) {
         await this.stateService.setGroupDelta(startingGroupDelta);
         await this.stateService.setUserDelta(startingUserDelta);
       }
 
-      this.messagingService.send("dirSyncCompleted", { successfully: false });
+      this.messagingService.send("dirSyncCompleted", {
+        successfully: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
       throw e;
     }
+  }
+
+  /**
+   * The upload reached Cockpit: that is a completed sync, unless Cockpit refused to import it now.
+   * What Cockpit could not import, and its warnings, are for an admin there, said as such, not as
+   * "an error has occurred" on this machine.
+   */
+  static outcomeOf(result: DirectorySyncResponse): SyncOutcome {
+    const issues = result?.issues ?? [];
+    const base = {
+      status: result?.status,
+      directory: result?.provider?.name,
+      received: result?.received ?? 0,
+    };
+    const inProgress = issues.find((i) => i.code === SYNC_IN_PROGRESS);
+    if (inProgress != null) {
+      return {
+        ...base,
+        needsAttention: true,
+        refused: true,
+        message:
+          `Cockpit did not import this upload: another import of "${base.directory}" is running. ` +
+          "The next scheduled sync sends the directory again; or press Sync Now once it has finished." +
+          (inProgress.message ? `\n• ${inProgress.message}` : ""),
+      };
+    }
+    const problems = issues.filter((i) => i.severity === "error" || i.severity === "warning");
+    const needsAttention =
+      problems.length > 0 || (result?.mappings ?? []).some((m) => m.errors > 0 || m.conflicts > 0);
+    const described = SyncService.describe(result);
+    return {
+      ...base,
+      needsAttention,
+      message: needsAttention
+        ? `${described}\n\nNeeds attention in Cockpit (Platform → Authentication → "${base.directory}")` +
+          (problems.length > 0 ? `:\n${problems.map((i) => `• ${i.message}`).join("\n")}` : ".")
+        : described,
+    };
   }
 
   /**
@@ -199,6 +249,12 @@ export class SyncService {
         `Uploaded ${result.received} directory entries to "${result.provider.name}". ` +
         "Finish the setup in Cockpit (Platform → Authentication): choose what to import and run the first import."
       );
+    }
+    if (
+      (result?.mappings == null || result.mappings.length === 0) &&
+      (result?.issues ?? []).some((i) => i.severity === "error")
+    ) {
+      return `Cockpit received ${result?.received ?? 0} entries but imported nothing.`;
     }
     if (result?.mappings == null || result.mappings.length === 0) {
       return `Cockpit received ${result?.received ?? 0} entries; no mapping is enabled for this directory in Cockpit yet.`;

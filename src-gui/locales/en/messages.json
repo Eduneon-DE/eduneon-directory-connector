@@ -158,6 +158,9 @@
   "save": {
     "message": "Save"
   },
+  "settingsSaved": {
+    "message": "Settings saved."
+  },
   "loggedOut": {
     "message": "Logged out"
   },

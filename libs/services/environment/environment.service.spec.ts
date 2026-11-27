@@ -133,5 +133,21 @@ describe("DefaultEnvironmentService", () => {
       );
       expect(sut.getIdentityUrl()).toBe(`${SELF_HOSTED}/identity`);
     });
+
+    it.each([
+      [" http://localhost:3090", "http://localhost:3090"],
+      ["http://localhost:3090/ ", "http://localhost:3090"],
+      ["HTTP://localhost:3090", "http://localhost:3090"],
+      ["http://localhost:3090/api", "http://localhost:3090"],
+      ["https://cockpit.example.org/API/", "https://cockpit.example.org"],
+      ["localhost:3090", "https://localhost:3090"],
+    ])("saves the server typed as %p as %p", async (typed, base) => {
+      await sut.setUrls({ base: typed, api: "", identity: "", webVault: "" } as EnvironmentUrls);
+
+      expect(stateService.setEnvironmentUrls).toHaveBeenCalledWith(
+        expect.objectContaining({ base }),
+      );
+      expect(sut.getApiUrl()).toBe(`${base}/api`);
+    });
   });
 });

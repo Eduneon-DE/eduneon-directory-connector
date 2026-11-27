@@ -15,6 +15,8 @@ import { I18nService } from "@/libs/abstractions/i18n.service";
 import { MessagingService } from "@/libs/abstractions/messaging.service";
 import { PlatformUtilsService } from "@/libs/abstractions/platformUtils.service";
 import { StateService } from "@/libs/abstractions/state.service";
+import type { SyncOutcome } from "@/libs/services/sync.service";
+import { isValidSyncInterval } from "@/libs/utils/syncInterval";
 
 import { ApiActionDirective } from "@/src-gui/angular/directives/api-action.directive";
 import { I18nPipe } from "@/src-gui/angular/pipes/i18n.pipe";
@@ -59,7 +61,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.broadcasterService.subscribe(BroadcasterSubscriptionId, async (message: any) => {
       switch (message.command) {
         case "dirSyncCompleted":
+          // Every sync ends here, scheduled ones too: show what the last one did.
+          this.showResult(message);
           await this.updateLastSync();
+          this.cdr.markForCheck();
           break;
         // The schedule can change while this tab is open (Stop, a check that re-arms it).
         case "syncScheduleStarted":
@@ -81,6 +86,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async start() {
+    if (!isValidSyncInterval((await this.stateService.getSync())?.interval)) {
+      // The schedule would never run: say so instead of showing it as on.
+      this.platformUtilsService.showToast("error", null, this.i18nService.t("intervalMin"));
+      return;
+    }
     const stops = this.stops;
     const promise = this.syncService.run(false, false);
     this.startPromise.set(promise);
@@ -112,6 +122,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (outcome != null) {
       this.lastResult.set({ message: outcome.message, needsAttention: !!outcome.needsAttention });
     }
+    if (outcome?.refused) {
+      this.platformUtilsService.showToast("warning", null, outcome.message, { timeout: 15000 });
+      return;
+    }
     this.platformUtilsService.showToast(
       outcome?.needsAttention ? "warning" : outcome?.status === "synced" ? "success" : "info",
       outcome != null ? this.i18nService.t("syncingComplete") : null,
@@ -132,6 +146,21 @@ export class DashboardComponent implements OnInit, OnDestroy {
       this.preview.set(null);
     } finally {
       this.cdr.markForCheck();
+    }
+  }
+
+  /** The outcome Cockpit gave, or why the sync failed, from a dirSyncCompleted message. */
+  private showResult(message: { outcome?: SyncOutcome; error?: string }) {
+    if (message.outcome != null) {
+      this.lastResult.set({
+        message: message.outcome.message,
+        needsAttention: !!message.outcome.needsAttention,
+      });
+    } else if (message.error != null) {
+      this.lastResult.set({
+        message: `The last sync failed: ${message.error}`,
+        needsAttention: true,
+      });
     }
   }
 

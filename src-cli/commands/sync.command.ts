@@ -15,7 +15,7 @@ export class SyncCommand {
       const result = await this.syncService.sync(false, false);
       const groupCount = result[0] != null ? result[0].length : 0;
       const userCount = result[1] != null ? result[1].length : 0;
-      const outcome = this.syncService.lastOutcome;
+      const outcome = result[2];
       const res = new MessageResponse(
         this.i18nService.t("syncingComplete"),
         outcome != null

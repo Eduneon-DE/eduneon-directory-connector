@@ -32,11 +32,13 @@ module.exports = {
   maxWorkers: 3,
 
   transform: {
-    "^.+\\.tsx?$": [
+    // Templates too, so a component's templateUrl loads in a spec.
+    "^.+\\.(tsx?|html)$": [
       "jest-preset-angular",
       // 'ts-jest',
       {
         ...defaultTransformerOptions,
+        stringifyContentPathRegex: "\\.html$",
         tsconfig: "./tsconfig.json",
         // Further workaround for memory leak, recommended here:
         // https://github.com/kulshekhar/ts-jest/issues/1967#issuecomment-697494014

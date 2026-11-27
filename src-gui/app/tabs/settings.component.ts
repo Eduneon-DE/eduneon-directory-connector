@@ -23,7 +23,8 @@ import { OktaConfiguration } from "@/libs/models/oktaConfiguration";
 import { OneLoginConfiguration } from "@/libs/models/oneLoginConfiguration";
 import { SyncConfiguration } from "@/libs/models/syncConfiguration";
 import { ConnectorUtils } from "@/libs/utils";
-import { isPortEmpty, normalizeLdapHost } from "@/libs/utils/ldapHost";
+import { applyLdapHostInput, parsePort } from "@/libs/utils/ldapHost";
+import { clampSyncInterval } from "@/libs/utils/syncInterval";
 
 import { A11yTitleDirective } from "@/src-gui/angular/directives/a11y-title.directive";
 import { I18nPipe } from "@/src-gui/angular/pipes/i18n.pipe";
@@ -119,6 +120,14 @@ export class SettingsComponent implements OnInit, OnDestroy {
     await this.submit();
   }
 
+  /** The Save button: save now and show what was saved (a pasted URL becomes host, port, encryption). */
+  async save() {
+    await this.submit();
+    this.ldap.set({ ...this.ldap() });
+    this.sync.set({ ...this.sync() });
+    this.platformUtilsService.showToast("success", null, this.i18nService.t("settingsSaved"));
+  }
+
   userFilterHelp = computed(() => {
     switch (this.directory()) {
       case DirectoryType.Ldap:
@@ -139,15 +148,16 @@ export class SettingsComponent implements OnInit, OnDestroy {
   async submit() {
     const ldap = this.ldap();
     const sync = this.sync();
-    // A hostname pasted as a URL ("ldaps://dc1:636/") is saved as the host alone; its port fills
-    // an empty port field.
-    if (ldap.hostname != null) {
-      const { hostname, port } = normalizeLdapHost(ldap.hostname);
-      ldap.hostname = hostname;
-      if (port != null && isPortEmpty(ldap.port)) {
-        ldap.port = port;
-      }
+    // A hostname pasted as a URL ("ldaps://dc1:636/") is saved as the host alone, with its port
+    // and encryption.
+    ldap.port = parsePort(ldap.port);
+    applyLdapHostInput(ldap);
+    // StartTLS is an option of "Encrypted": unticking that switches it off too.
+    if (!ldap.ssl) {
+      ldap.startTls = false;
     }
+    // An emptied or too short interval would stop the schedule without a word.
+    sync.interval = clampSyncInterval(sync.interval);
     ConnectorUtils.adjustConfigForSave(ldap, sync);
     if (ldap != null && ldap.ad) {
       ldap.pagedSearch = true;

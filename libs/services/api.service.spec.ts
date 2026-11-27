@@ -14,9 +14,13 @@ import { ApiService } from "@/libs/services/api.service";
 class TestApiService extends ApiService {
   readonly requests: Request[] = [];
   next: () => Response = () => json(200, {});
+  nativeFetchImpl: ((request: Request) => Promise<Response>) | null = null;
 
   protected nativeFetch(request: Request): Promise<Response> {
     this.requests.push(request);
+    if (this.nativeFetchImpl != null) {
+      return this.nativeFetchImpl(request);
+    }
     return Promise.resolve(this.next());
   }
 }
@@ -74,7 +78,7 @@ describe("ApiService", () => {
   });
 
   it("logs out when Cockpit rejects the stored token", async () => {
-    sut.next = () => json(401, { message: "Unauthorized" });
+    sut.next = () => json(401, { statusCode: 401, message: "Invalid or expired API token" });
 
     await expect(
       sut.postDirectorySync({ dryRun: false, baseDn: "", entries: [] }),
@@ -112,7 +116,7 @@ describe("ApiService", () => {
   });
 
   it("still says to log in again when clearing the rejected token fails", async () => {
-    sut.next = () => json(401, { message: "Unauthorized" });
+    sut.next = () => json(401, { statusCode: 401, message: "Invalid or expired API token" });
     logout.mockRejectedValue(new Error("Failed to clear 1 auth token(s): accessToken"));
 
     await expect(
@@ -150,5 +154,57 @@ describe("ApiService", () => {
       ),
     });
     expect(logout).not.toHaveBeenCalled();
+  });
+
+  it("keeps the token on a 401 that is not Cockpit rejecting it (a proxy, another server)", async () => {
+    for (const answer of [
+      () => json(401, { message: "Unauthorized" }),
+      () =>
+        new Response("<html>Login</html>", {
+          status: 401,
+          headers: { "content-type": "text/html" },
+        }),
+    ]) {
+      sut.next = answer;
+      await expect(
+        sut.postDirectorySync({ dryRun: false, baseDn: "", entries: [] }),
+      ).rejects.toMatchObject({ message: expect.stringContaining("The API token is kept") });
+    }
+    expect(logout).not.toHaveBeenCalled();
+  });
+
+  it("says the server is not Cockpit when it answers with a web page", async () => {
+    sut.next = () =>
+      new Response("<html>Sign in</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+
+    await expect(sut.getConnectorStatus("t")).rejects.toThrow("is not Cockpit");
+  });
+
+  it("gives every request a time limit, and says when Cockpit did not answer in time", async () => {
+    sut.next = () => json(200, {});
+    await sut.getConnectorStatus("t");
+    expect(sut.requests[0].signal).toBeDefined();
+
+    sut.nativeFetchImpl = () => {
+      const e = new Error("The operation was aborted due to timeout");
+      e.name = "TimeoutError";
+      return Promise.reject(e);
+    };
+    await expect(sut.getConnectorStatus("t")).rejects.toThrow("did not answer within 30 seconds");
+  });
+
+  it("explains a 413 with advice instead of a bare status", async () => {
+    sut.next = () =>
+      new Response("<html>413 Request Entity Too Large</html>", {
+        status: 413,
+        headers: { "content-type": "text/html" },
+      });
+
+    await expect(
+      sut.postDirectorySync({ dryRun: false, baseDn: "", entries: [] }),
+    ).rejects.toMatchObject({ message: expect.stringContaining("too large (413)") });
   });
 });
