@@ -2,7 +2,7 @@
   "name": "@eduneon/directory-connector",
   "productName": "Eduneon Directory Connector",
   "description": "Sync users and groups from your directory to Eduneon.",
-  "version": "2026.11.2",
+  "version": "2026.11.3",
   "keywords": [
     "eduneon",
     "ldap",
